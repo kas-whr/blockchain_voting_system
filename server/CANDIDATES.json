@@ -1,0 +1,27 @@
+[
+    {
+        "ID": 1,
+        "FullName": "Aisha Rahman",
+        "Description": "Advocates transparent governance, digital public services, and community-led budgeting."
+    },
+    {
+        "ID": 2,
+        "FullName": "Daniel Okafor",
+        "Description": "Focuses on job creation, small business support, and sustainable local development."
+    },
+    {
+        "ID": 3,
+        "FullName": "Sofia Martinez",
+        "Description": "Prioritizes education reform, affordable healthcare access, and youth empowerment programs."
+    },
+    {
+        "ID": 4,
+        "FullName": "Liam Chen",
+        "Description": "Supports infrastructure modernization, green energy transition, and smart city planning."
+    },
+    {
+        "ID": 5,
+        "FullName": "Mira Petrovic",
+        "Description": "Promotes anti-corruption measures, open data policies, and stronger civic participation."
+    }
+]

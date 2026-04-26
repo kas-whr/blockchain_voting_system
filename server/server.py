@@ -1,16 +1,36 @@
 import socket
 import json
-import uuid
+import sys
 from blockchain import Blockchain
 
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 PORT = 5000
 
 blockchain = Blockchain()
 
 registered_voters = {}
 
-ALLOWED_CANDIDATES = ["Daria", "Ivan", "Alice"]
+CANDIDATES = []
+CANDIDATES_DETAILS = []
+
+
+def load_candidates(filename):
+    """Load candidates from JSON file"""
+    try:
+        with open(filename, 'r') as f:
+            candidates_data = json.load(f)
+            if isinstance(candidates_data, list):
+                names = [c.get("FullName") for c in candidates_data if "FullName" in c]
+                return names, candidates_data
+            else:
+                print("Error: Invalid candidates file format")
+                sys.exit(1)
+    except FileNotFoundError:
+        print(f"Error: Candidates file '{filename}' not found")
+        sys.exit(1)
+    except json.JSONDecodeError:
+        print("Error: Invalid JSON in candidates file")
+        sys.exit(1)
 
 
 def handle_request(request):
@@ -26,7 +46,13 @@ def handle_request(request):
                 "message": "first_name and last_name are required"
             }
 
-        voter_id = str(uuid.uuid4())
+        voter_id = f"{first_name}_{last_name}"
+
+        if voter_id in registered_voters:
+            return {
+                "status": "error",
+                "message": f"{first_name} {last_name} is already registered"
+            }
 
         registered_voters[voter_id] = {
             "first_name": first_name,
@@ -37,7 +63,7 @@ def handle_request(request):
             "status": "success",
             "message": "Registration successful",
             "voter_id": voter_id,
-            "candidates": ALLOWED_CANDIDATES
+            "candidates": CANDIDATES
         }
 
     elif action == "vote":
@@ -56,11 +82,11 @@ def handle_request(request):
                 "message": "Voter is not registered"
             }
 
-        if candidate not in ALLOWED_CANDIDATES:
+        if candidate not in CANDIDATES:
             return {
                 "status": "error",
                 "message": "Invalid candidate",
-                "allowed_candidates": ALLOWED_CANDIDATES
+                "allowed_candidates": CANDIDATES
             }
 
         block, message = blockchain.add_vote(voter_id, candidate)
@@ -81,7 +107,13 @@ def handle_request(request):
     elif action == "candidates":
         return {
             "status": "success",
-            "candidates": ALLOWED_CANDIDATES
+            "candidates": CANDIDATES
+        }
+
+    elif action == "candidates_details":
+        return {
+            "status": "success",
+            "candidates": CANDIDATES_DETAILS
         }
 
     elif action == "chain":
@@ -134,12 +166,17 @@ def handle_request(request):
         }
 
 
-def start_server():
+def start_server(port, candidates_file):
+    global CANDIDATES, CANDIDATES_DETAILS
+
+    CANDIDATES, CANDIDATES_DETAILS = load_candidates(candidates_file)
+
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((HOST, PORT))
+    server_socket.bind((HOST, port))
     server_socket.listen()
 
-    print(f"Socket server is running on {HOST}:{PORT}")
+    print(f"Socket server is running on {HOST}:{port}")
+    print(f"Loaded {len(CANDIDATES)} candidates: {', '.join(CANDIDATES)}")
 
     while True:
         client_socket, address = server_socket.accept()
@@ -166,9 +203,27 @@ def start_server():
                 "message": str(error)
             }
 
-        client_socket.send(json.dumps(response).encode())
+        # Properly send response (handle large payloads)
+        response_json = json.dumps(response)
+        response_bytes = response_json.encode()
+
+        # Send response size first, then data
+        client_socket.sendall(response_bytes)
         client_socket.close()
 
 
 if __name__ == "__main__":
-    start_server()
+    if len(sys.argv) < 3:
+        print("Usage: python server.py PORT CANDIDATES_FILE.json")
+        print("Example: python server.py 5000 CANDIDATES.json")
+        sys.exit(1)
+
+    try:
+        port = int(sys.argv[1])
+    except ValueError:
+        print("Error: PORT must be an integer")
+        sys.exit(1)
+
+    candidates_file = sys.argv[2]
+
+    start_server(port, candidates_file)
