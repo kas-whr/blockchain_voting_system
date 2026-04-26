@@ -1,47 +1,42 @@
-import requests
+import socket
+import json
 
-SERVER_URL = "http://127.0.0.1:5000"
-
-session = requests.Session()
-session.trust_env = False
+HOST = "127.0.0.1"
+PORT = 5000
 
 current_voter_id = None
 has_voted = False
 
 
-def print_response(response):
-    print("STATUS:", response.status_code)
+def send_request(request):
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.connect((HOST, PORT))
 
-    try:
-        print(response.json())
-    except requests.exceptions.JSONDecodeError:
-        print("Server returned non-JSON response:")
-        print(response.text)
+    client_socket.send(json.dumps(request).encode())
+
+    response = client_socket.recv(8192).decode()
+    client_socket.close()
+
+    return json.loads(response)
 
 
 def register():
     global current_voter_id
 
-    name = input("Enter your name: ")
-    age = input("Enter your age: ")
+    first_name = input("Enter your first name: ")
+    last_name = input("Enter your last name: ")
 
-    response = session.post(
-        f"{SERVER_URL}/register",
-        json={
-            "name": name,
-            "age": age
-        }
-    )
+    response = send_request({
+        "action": "register",
+        "first_name": first_name,
+        "last_name": last_name
+    })
 
-    data = response.json()
+    print(response)
 
-    if response.status_code == 200:
-        current_voter_id = data["voter_id"]
-        print("Registration successful!")
+    if response["status"] == "success":
+        current_voter_id = response["voter_id"]
         print("Your terminal voter ID:", current_voter_id)
-        print("Available candidates:", data["candidates"])
-    else:
-        print(data)
 
 
 def submit_vote():
@@ -55,8 +50,11 @@ def submit_vote():
         print("This terminal has already voted.")
         return
 
-    candidates_response = session.get(f"{SERVER_URL}/candidates")
-    candidates = candidates_response.json()
+    candidates_response = send_request({
+        "action": "candidates"
+    })
+
+    candidates = candidates_response["candidates"]
 
     print("Available candidates:")
     for candidate in candidates:
@@ -64,39 +62,51 @@ def submit_vote():
 
     candidate = input("Enter candidate name: ")
 
-    response = session.post(
-        f"{SERVER_URL}/vote",
-        json={
-            "voter_id": current_voter_id,
-            "candidate": candidate
-        }
-    )
+    response = send_request({
+        "action": "vote",
+        "voter_id": current_voter_id,
+        "candidate": candidate
+    })
 
-    if response.status_code == 200:
+    print(response)
+
+    if response["status"] == "success":
         has_voted = True
-
-    print_response(response)
 
 
 def show_chain():
-    response = session.get(f"{SERVER_URL}/chain")
-    print_response(response)
+    response = send_request({
+        "action": "chain"
+    })
+
+    print(response)
 
 
 def show_results():
-    response = session.get(f"{SERVER_URL}/results")
-    print_response(response)
+    response = send_request({
+        "action": "results"
+    })
+
+    print(response)
 
 
 def verify_vote():
     receipt = input("Enter receipt hash: ")
-    response = session.get(f"{SERVER_URL}/verify/{receipt}")
-    print_response(response)
+
+    response = send_request({
+        "action": "verify",
+        "receipt": receipt
+    })
+
+    print(response)
 
 
 def validate_chain():
-    response = session.get(f"{SERVER_URL}/validate")
-    print_response(response)
+    response = send_request({
+        "action": "validate"
+    })
+
+    print(response)
 
 
 while True:
