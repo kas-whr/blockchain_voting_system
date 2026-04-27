@@ -42,7 +42,7 @@ cd blockchain_voting_system
 
 **Terminal 1: Start Server**
 ```bash
-python server.py 5000 CANDIDATES.json
+python server/server.py 5000 server/CANDIDATES.json
 ```
 
 Output:
@@ -77,18 +77,18 @@ blockchain_voting_system/
 ├── server/
 │   ├── server.py                 # Main server (handles votes, validation)
 │   ├── blockchain.py             # Core blockchain logic
+│   ├── crypto_utils.py           # Cryptographic utilities
+│   ├── server_config.py          # Database configuration
+│   ├── tokens.py                 # Token management
 │   └── CANDIDATES.json           # Candidate list
 ├── client/
 │   └── client.py                 # Interactive client application
-├── admin_test.py                 # Automated 7-test suite
-├── diagnose.py                   # Diagnostic tool
-├── README.md                      # This file (installation & quick start)
-├── BLOCKCHAIN_BASED_VOTING_SYSTEM_GUIDE.md  # Comprehensive technical guide
-├── FEATURES_EXPLAINED.md         # Detailed feature explanations
-├── BLOCKCHAIN_FEATURES.md        # Implementation guide
-├── ADMIN_TESTING_GUIDE.md        # Testing reference
-├── VALIDATION_DISPLAY_GUIDE.md   # Validation output explanation
-└── PROJECT_DESCRIPTION.pdf       # Academic project specification
+├── tests.py                      # Automated 7-test suite
+├── README.md                     # Installation, usage, quick start
+├── TECHNICAL_GUIDE.md            # Architecture, design, validation checklist
+├── requirements.txt              # Python dependencies
+├── setup_venv.sh                 # Virtual environment setup script
+└── venv/                         # Virtual environment (local)
 ```
 
 ---
@@ -279,11 +279,30 @@ All communication uses JSON over TCP sockets.
 
 ## 🧪 Testing
 
+### Setup Virtual Environment
+
+```bash
+# Option 1: Run setup script (Linux/Mac)
+bash setup_venv.sh
+
+# Option 2: Manual setup
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or
+venv\Scripts\activate  # Windows
+
+# Install test dependencies
+pip install -r requirements.txt
+```
+
 ### Automated Tests (Recommended)
 
 ```bash
-# Full test suite with diagnostics
-python admin_test.py localhost 5000
+# Ensure server is running first
+python server/server.py 5000 server/CANDIDATES.json
+
+# In another terminal, run tests
+python tests.py localhost 5000
 ```
 
 **Tests Performed:**
@@ -295,17 +314,7 @@ python admin_test.py localhost 5000
 6. Results Accuracy - Verifies vote counts match manual count
 7. Vote Verification - Tests receipt verification works
 
-### Diagnostic Tool
-
-```bash
-python diagnose.py localhost 5000
-
-# Checks:
-- Server connectivity
-- Blockchain initialization
-- Candidate loading
-- Vote submission
-```
+Test output is saved to: `admin_test_log.txt`
 
 ---
 
@@ -326,7 +335,7 @@ python diagnose.py localhost 5000
 ### Issue: "Connection refused"
 ```bash
 # Make sure server is running
-python server.py 5000 CANDIDATES.json
+python server/server.py 5000 server/CANDIDATES.json
 # Check port 5000 is available
 ```
 
@@ -344,8 +353,8 @@ python server.py 5000 /home/user/repository/server/CANDIDATES.json
 
 | File | Purpose |
 |------|---------|
-| **README.md** | Installation, quick start, basic usage (this file) |
-| **BLOCKCHAIN_BASED_VOTING_SYSTEM_GUIDE.md** | Comprehensive technical guide, architecture, blockchain mechanics, validation checklist |
+| **README.md** | Installation, usage, API reference, troubleshooting (this file) |
+| **TECHNICAL_GUIDE.md** | Architecture, blockchain mechanics, validation checklist, security analysis |
 
 ---
 
