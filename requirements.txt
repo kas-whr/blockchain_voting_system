@@ -1,0 +1,7 @@
+# Blockchain Voting System - Requirements
+# The system uses only Python standard library for core functionality
+# No external dependencies required for production
+
+# Development and testing dependencies (optional)
+pytest>=7.0
+pytest-cov>=4.0

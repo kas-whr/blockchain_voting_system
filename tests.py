@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Admin Testing Tool for Blockchain Voting System
+Blockchain Voting System - Test Suite
 Tests consensus, immutability, and vote integrity
 """
 
@@ -19,7 +19,7 @@ class AdminTester:
         self.results = {}
         self.lock = threading.Lock()
         self.test_log = []
-        self.candidates = []  # ← Add this
+        self.candidates = []
 
     def send_request(self, request):
         """Send request to server"""
@@ -29,7 +29,7 @@ class AdminTester:
             s.connect((self.host, self.port))
             s.send(json.dumps(request).encode())
 
-            # Receive all data (handle large responses)
+            # Receive all data
             response_data = b""
             while True:
                 try:
@@ -64,7 +64,6 @@ class AdminTester:
         self.log("TEST 1: BASIC VOTING")
         self.log("="*60)
 
-        # Get available candidates
         if not self.candidates:
             candidates_response = self.send_request({"action": "candidates"})
             self.candidates = candidates_response.get("candidates", [])
@@ -83,11 +82,8 @@ class AdminTester:
 
             if response.get("status") == "success":
                 voter_id = response["voter_id"]
-
-                # Vote for each candidate in rotation
                 candidate = self.candidates[i % len(self.candidates)]
 
-                # Vote
                 vote_response = self.send_request({
                     "action": "vote",
                     "voter_id": voter_id,
@@ -117,7 +113,6 @@ class AdminTester:
 
         voter_name = "Double_Voter"
 
-        # First vote
         response1 = self.send_request({
             "action": "register",
             "first_name": voter_name,
@@ -128,7 +123,6 @@ class AdminTester:
             voter_id = response1["voter_id"]
             self.log(f"✓ First registration: {voter_name}")
 
-            # Try to vote twice
             candidate1 = self.candidates[0]
             candidate2 = self.candidates[1] if len(self.candidates) > 1 else self.candidates[0]
 
@@ -141,7 +135,6 @@ class AdminTester:
             if vote1.get("status") == "success":
                 self.log(f"✓ First vote submitted for {candidate1}")
 
-            # Try second vote with same person
             vote2 = self.send_request({
                 "action": "vote",
                 "voter_id": voter_id,
@@ -153,7 +146,6 @@ class AdminTester:
             else:
                 self.log(f"✗ SECURITY ISSUE: Double vote was allowed!")
 
-        # Try re-registration
         response2 = self.send_request({
             "action": "register",
             "first_name": voter_name,
@@ -171,7 +163,6 @@ class AdminTester:
         self.log(f"TEST 3: CONCURRENT VOTING ({num_clients} clients, {votes_per_client} votes each)")
         self.log("="*60)
 
-        # Fetch candidates if not already loaded
         if not self.candidates:
             candidates_response = self.send_request({"action": "candidates"})
             self.candidates = candidates_response.get("candidates", [])
@@ -214,8 +205,6 @@ class AdminTester:
 
             if response.get("status") == "success":
                 voter_id = response["voter_id"]
-
-                # Alternate between candidates
                 candidate = self.candidates[i % len(self.candidates)]
 
                 vote_response = self.send_request({
@@ -242,18 +231,11 @@ class AdminTester:
         else:
             self.log("✗ Blockchain is INVALID - Chain broken!")
 
-        # Get chain and verify hashes
         chain_response = self.send_request({"action": "chain"})
         chain = chain_response.get("chain", [])
 
-        # Handle empty chain
         if len(chain) == 0:
             self.log("\n✗ WARNING: Blockchain is empty (0 blocks)")
-            self.log("  This should not happen - genesis block should exist")
-            self.log("  Possible causes:")
-            self.log("    - Server not properly initialized")
-            self.log("    - Connection issue")
-            self.log("    - Fresh server instance")
             return
 
         self.log(f"\nChain Statistics:")
@@ -264,15 +246,12 @@ class AdminTester:
 
         if vote_blocks == 0:
             self.log("\n  ℹ No votes recorded yet (only genesis block)")
-            self.log("  This is normal if no votes were submitted in previous tests")
             return
 
-        # Verify each block's hash
         self.log(f"\n  Verifying block hashes...")
         all_valid = True
         for i in range(1, len(chain)):
             block = chain[i]
-            # Reconstruct hash to verify
             data = (
                 str(block["index"]) +
                 str(block["timestamp"]) +
@@ -305,13 +284,10 @@ class AdminTester:
 
         if len(chain) <= 1:
             self.log("  ℹ No votes recorded (only genesis or empty chain)")
-            self.log("  Skipping deduplication test")
             return
 
-        # Extract voter hashes
-        voter_hashes = [block["voter_id_hash"] for block in chain[1:]]  # Skip genesis
+        voter_hashes = [block["voter_id_hash"] for block in chain[1:]]
 
-        # Check for duplicates
         unique_voters = len(set(voter_hashes))
         total_votes = len(voter_hashes)
 
@@ -324,7 +300,6 @@ class AdminTester:
             duplicates = total_votes - unique_voters
             self.log(f"✗ DUPLICATES FOUND: {duplicates} duplicate votes detected!")
 
-            # Show which voters voted multiple times
             voter_counts = defaultdict(int)
             for voter_hash in voter_hashes:
                 voter_counts[voter_hash] += 1
@@ -339,21 +314,18 @@ class AdminTester:
         self.log("TEST 6: RESULTS ACCURACY")
         self.log("="*60)
 
-        # Get results from server
         results_response = self.send_request({"action": "results"})
         server_results = results_response.get("results", {})
 
-        # Get chain and count manually
         chain_response = self.send_request({"action": "chain"})
         chain = chain_response.get("chain", [])
 
         if len(chain) <= 1:
             self.log("  ℹ No votes recorded (only genesis or empty chain)")
-            self.log("  Skipping results accuracy test")
             return
 
         manual_counts = defaultdict(int)
-        for block in chain[1:]:  # Skip genesis
+        for block in chain[1:]:
             candidate = block["candidate"]
             if candidate != "GENESIS":
                 manual_counts[candidate] += 1
@@ -366,7 +338,6 @@ class AdminTester:
         for candidate, count in sorted(manual_counts.items()):
             self.log(f"  {candidate}: {count} votes")
 
-        # Verify they match
         if dict(manual_counts) == server_results:
             self.log("\n✓ Results match - Data integrity confirmed")
         else:
@@ -382,7 +353,6 @@ class AdminTester:
             self.log("No votes to verify. Run other tests first.")
             return
 
-        # Test verification for a few votes
         receipts_to_check = list(self.results.values())[:3]
 
         for i, receipt in enumerate(receipts_to_check):
@@ -405,14 +375,12 @@ class AdminTester:
         self.log("╚" + "="*58 + "╝")
 
         try:
-            # Connect test
             test_conn = self.send_request({"action": "candidates"})
             if test_conn.get("status") != "success":
                 self.log("\n✗ FATAL: Cannot connect to server!")
                 self.log(f"  Error: {test_conn.get('message')}")
                 return
 
-            # Load candidates
             self.candidates = test_conn.get("candidates", [])
 
             self.log("\n✓ Connected to server")
@@ -421,7 +389,6 @@ class AdminTester:
             for i, candidate in enumerate(self.candidates, 1):
                 self.log(f"    {i}. {candidate}")
 
-            # Run tests
             self.test_1_basic_voting(num_votes=100)
             self.test_2_double_voting_prevention()
             self.test_3_concurrent_voting(num_clients=10, votes_per_client=20)
@@ -430,7 +397,6 @@ class AdminTester:
             self.test_6_results_accuracy()
             self.test_7_vote_verification()
 
-            # Summary
             self.log("\n\n" + "="*60)
             self.log("TEST SUMMARY")
             self.log("="*60)
@@ -451,11 +417,9 @@ class AdminTester:
 if __name__ == "__main__":
     import sys
 
-    # Get server details from arguments or use defaults
     host = sys.argv[1] if len(sys.argv) > 1 else "localhost"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 5000
 
-    # Run tests
     admin = AdminTester(host, port)
     admin.run_all_tests()
     admin.save_test_log()
