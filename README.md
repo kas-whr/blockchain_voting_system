@@ -102,7 +102,14 @@ From admin panel:
 
 ## 8) Optional: Run Test Suite
 
-Start admin server first, then from repository root:
+For security, test token issuance (`request_test_tokens`) is disabled by default.
+To run automated tests, start the plain voting server with `--test-mode`:
+
+```bash
+python3 server/server.py 5000 server/CANDIDATES.json --test-mode
+```
+
+Then run tests from repository root:
 
 ```bash
 python3 server/tests.py localhost 5000 150
@@ -112,6 +119,10 @@ Arguments:
 - host (default `localhost`)
 - port (default `5000`)
 - number of votes to simulate (default `150`)
+
+Important:
+- Do not use `--test-mode` in normal voting sessions.
+- `admin_server.py` does not enable test token API by default, which is intentional for safer operation.
 
 ## 9) Troubleshooting
 

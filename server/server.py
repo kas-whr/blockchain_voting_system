@@ -21,11 +21,12 @@ import hashlib
 class VotingServer:
     """Main voting server."""
 
-    def __init__(self, host="0.0.0.0", port=5000, candidates_file="server/CANDIDATES.json"):
+    def __init__(self, host="0.0.0.0", port=5000, candidates_file="server/CANDIDATES.json", test_mode=False):
         """Initialize voting server."""
         self.host = host
         self.port = port
         self.candidates_file = candidates_file
+        self.test_mode = test_mode
         self.candidates = []
         self.blockchain = None
         self.crypto_scheme = None
@@ -197,6 +198,13 @@ class VotingServer:
 
         # ========== ISSUE TOKENS FOR AUTOMATED TESTS ==========
         elif action == "request_test_tokens":
+            if not self.test_mode:
+                return {
+                    "status": "error",
+                    "message": "request_test_tokens is disabled (start server with --test-mode)",
+                    "code": "forbidden"
+                }
+
             count = request.get("count", 1)
 
             try:
@@ -404,8 +412,9 @@ class VotingServer:
 def main():
     """Main entry point."""
     if len(sys.argv) < 2:
-        print("Usage: python server.py PORT [CANDIDATES_FILE]")
-        print("Example: python server.py 5000 server/CANDIDATES.json")
+        print("Usage: python server.py PORT [CANDIDATES_FILE] [--test-mode]")
+        print("Example (normal): python server.py 5000 server/CANDIDATES.json")
+        print("Example (tests):  python server.py 5000 server/CANDIDATES.json --test-mode")
         sys.exit(1)
 
     try:
@@ -414,9 +423,21 @@ def main():
         print("Error: PORT must be an integer")
         sys.exit(1)
 
-    candidates_file = sys.argv[2] if len(sys.argv) > 2 else "server/CANDIDATES.json"
+    args = sys.argv[2:]
+    test_mode = False
+    filtered_args = []
+    for arg in args:
+        if arg == "--test-mode":
+            test_mode = True
+        else:
+            filtered_args.append(arg)
 
-    server = VotingServer(port=port, candidates_file=candidates_file)
+    candidates_file = filtered_args[0] if filtered_args else "server/CANDIDATES.json"
+
+    if test_mode:
+        print("⚠ Server started in TEST MODE: request_test_tokens is enabled")
+
+    server = VotingServer(port=port, candidates_file=candidates_file, test_mode=test_mode)
     server.start()
 
 
