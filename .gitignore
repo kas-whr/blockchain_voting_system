@@ -2,28 +2,6 @@
 __pycache__/
 server/__pycache__/
 client/__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
 # Virtual Environments
 venv/
@@ -34,52 +12,14 @@ env/
 
 # IDE & Editors
 .vscode/
-.idea/
-*.swp
-*.swo
-*~
-.DS_Store
-*.sublime-project
-*.sublime-workspace
-.atom/
-.project
-.pydevproject
-.settings/
-
-# Testing & Logs
-admin_test_log.txt
-*.log
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.hypothesis/
-
-# Generated/Temporary Files
-*.tmp
-*.bak
-*.backup
-*.lock
-*.pid
 
 # Voting System Generated Files
-client/*_receipt.txt
-client/*_blockchain.txt
-client/*_results.txt
+client/receipts/
+client/exports/
 *.txt
-
-# OS Specific
-.DS_Store
-Thumbs.db
-*.pyo
-
-# Project Specific
-admin_test_log.txt
-diagnose_output.txt
+logs/
 
 # Don't ignore
 !README.md
-!BLOCKCHAIN_BASED_VOTING_SYSTEM_GUIDE.md
-!server/CANDIDATES.json
 !client/
 !server/
