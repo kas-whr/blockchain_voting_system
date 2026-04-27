@@ -4,20 +4,23 @@
 
 A **centralized blockchain-based voting system** where votes are submitted by clients and immutably recorded on a distributed ledger managed by a single server node. The system ensures vote integrity, prevents double voting, provides transparency, and allows anonymous verification of vote inclusion.
 
-**Implementation:** Python | Socket-based Communication | SHA-256 Hashing
+**Implementation:** Python | Socket-based Communication | SHA-256 Hashing | Python-RSA
+
+**Academic Design:** Pure Python implementation optimized for learning blockchain concepts.
 
 ---
 
 ## ✨ Key Features
 
-✅ **Distributed Ledger** - Central blockchain node stores all votes immutably  
+✅ **In-Memory Blockchain** - Central node stores all votes in RAM  
 ✅ **Immutable Records** - SHA-256 hash chains prevent tampering  
-✅ **Double Voting Prevention** - Voters identified by Name+Surname, can only vote once  
+✅ **Double Voting Prevention** - Voter hashing ensures one vote per person  
 ✅ **Vote Transparency** - Public blockchain viewable by all clients  
 ✅ **Vote Verification** - Voters can verify their vote was recorded using receipt hash  
 ✅ **Anonymous Voting** - Voter identities hashed, not stored in blockchain  
 ✅ **Blockchain Validation** - Multi-step validation confirms chain integrity  
-✅ **Admin Testing Suite** - 7 automated tests for consensus and security  
+✅ **RSA Blind Signatures** - Anonymous voting using pure-Python RSA  
+✅ **Testing Suite** - 7 automated tests for consensus and security  
 
 ---
 
@@ -26,7 +29,7 @@ A **centralized blockchain-based voting system** where votes are submitted by cl
 ### Prerequisites
 
 - Python 3.8+
-- No external dependencies for core system (uses only Python stdlib)
+- python-rsa library (pure Python, no native dependencies)
 - All data stored in RAM (no database required)
 
 ### Installation & Setup
@@ -41,13 +44,16 @@ source venv/bin/activate
 # Windows
 python -m venv venv
 venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 **Option 2: Direct Python (No Virtual Environment)**
 
 ```bash
-# Just run directly with system Python
-# No installation needed - uses only built-in libraries
+# Install RSA library only
+pip install rsa
 ```
 
 ### Run the System
@@ -251,15 +257,16 @@ All communication uses JSON over TCP sockets.
 ✅ **Immutable Records** - Hash chains link all blocks, tampering breaks chain  
 ✅ **Vote Verification** - Voters get receipt hash to prove vote was recorded  
 ✅ **Chain Validation** - Multi-step validation confirms all blocks valid and linked  
-✅ **Registration Blocking** - Same name cannot register twice (prevents person re-voting)  
+✅ **Registration Blocking** - Same name cannot register twice  
+✅ **RSA Cryptography** - Pure-Python RSA for blind signatures and verification  
 
 ### Not Implemented (Limitations)
 
 ⚠️ **Single Node** - Centralized (not fully decentralized)  
-⚠️ **No Cryptographic Signatures** - Votes not digitally signed  
-⚠️ **No Merkle Proofs** - Basic receipt verification only (no anonymous batch verification)  
-⚠️ **No Persistence** - Blockchain stored in memory only (resets on server restart)  
-⚠️ **No Authentication** - No user password or multi-factor authentication  
+⚠️ **Merkle Proofs** - Basic receipt verification only (no batch verification)  
+⚠️ **Persistence** - Blockchain stored in RAM only (resets on server restart)  
+⚠️ **Authentication** - No user password or multi-factor authentication  
+⚠️ **TLS/SSL** - Socket communication not encrypted (academic project)  
 
 ---
 

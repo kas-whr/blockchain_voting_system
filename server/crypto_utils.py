@@ -1,29 +1,28 @@
 """
-RSA Blind Signatures for Anonymous Voting
+RSA Cryptography for Voting System
 
-This module implements the cryptographic primitives for blind signature voting:
-- RSA key generation and management
-- Blinding/unblinding operations
-- Blind signing
+Simple, pure-Python RSA implementation using python-rsa library.
+Perfect for academic understanding of:
+- RSA key generation
+- Blind signatures for anonymous voting
 - Signature verification
-- Nonce generation for vote freshness
 """
 
 import secrets
 import hashlib
-from cryptography.hazmat.primitives.asymmetric import rsa
-from cryptography.hazmat.backends import default_backend
+import rsa
 
 
 class BlindSignatureScheme:
     """
-    RSA Blind Signature implementation for anonymous voting.
+    RSA Blind Signature for anonymous voting.
 
+    Academic implementation using python-rsa.
     Flow:
     1. Client blinds vote: blinded = blind(vote)
-    2. Server signs blinded data: sig = sign_blinded(blinded)
+    2. Server signs blinded: sig = sign_blinded(blinded)
     3. Client unblinds: signature = unblind(sig)
-    4. Client/Server verify: verify(vote, signature)
+    4. Anyone verifies: verify(vote, signature)
 
     Server never sees the actual vote.
     """
@@ -38,52 +37,45 @@ class BlindSignatureScheme:
         """
         if private_key:
             self.private_key = private_key
+            self.public_key = private_key.publickey()
         else:
             # Generate new keypair
-            self.private_key = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=key_size,
-                backend=default_backend()
-            )
-
-        self.public_key = self.private_key.public_key()
-
-        # Extract RSA parameters for blind signature math
-        self.N = self.public_key.public_numbers().n  # Modulus
-        self.e = self.public_key.public_numbers().e  # Public exponent
-        self.d = self.private_key.private_numbers().d  # Private exponent
-        self.key_size_bytes = self.public_key.key_size // 8  # e.g., 256 bytes for 2048-bit
+            self.public_key, self.private_key = rsa.newkeys(key_size)
 
     def blind(self, message_bytes, blinding_factor=None):
         """
         Blind a message using RSA blinding.
 
         Blinding prevents the signer from knowing what they're signing.
-        Formula: blinded = (message * r^e) mod N
 
         Args:
             message_bytes: Message to blind (bytes)
-            blinding_factor: Random factor (optional, generated if not provided)
+            blinding_factor: Random factor (optional)
 
         Returns:
             (blinded_data: bytes, blinding_factor: int)
         """
+        # Extract RSA parameters
+        N = self.public_key.n
+        e = self.public_key.e
+
         if blinding_factor is None:
-            blinding_factor = secrets.randbelow(self.N)
+            blinding_factor = secrets.randbelow(N)
 
         # Convert message to integer
         message_int = int.from_bytes(message_bytes, 'big')
 
         # Ensure message is within valid range
-        if message_int >= self.N:
+        if message_int >= N:
             raise ValueError("Message too large for RSA key size")
 
         # Blind: blinded = (message * r^e) mod N
-        r_e = pow(blinding_factor, self.e, self.N)
-        blinded_int = (message_int * r_e) % self.N
+        r_e = pow(blinding_factor, e, N)
+        blinded_int = (message_int * r_e) % N
 
         # Convert back to bytes (pad to key size)
-        blinded_bytes = blinded_int.to_bytes(self.key_size_bytes, 'big')
+        key_size_bytes = self.public_key.n.bit_length() // 8 + 1
+        blinded_bytes = blinded_int.to_bytes(key_size_bytes, 'big')
 
         return blinded_bytes, blinding_factor
 
@@ -92,7 +84,6 @@ class BlindSignatureScheme:
         Sign a blinded message (server-side operation).
 
         The server signs without knowing the actual message.
-        Formula: signature = blinded^d mod N
 
         Args:
             blinded_data: Blinded message (bytes)
@@ -104,10 +95,13 @@ class BlindSignatureScheme:
         blinded_int = int.from_bytes(blinded_data, 'big')
 
         # Sign: signature = blinded^d mod N
-        signature_int = pow(blinded_int, self.d, self.N)
+        d = self.private_key.d
+        N = self.private_key.n
+        signature_int = pow(blinded_int, d, N)
 
         # Convert back to bytes
-        signature_bytes = signature_int.to_bytes(self.key_size_bytes, 'big')
+        key_size_bytes = self.private_key.n.bit_length() // 8 + 1
+        signature_bytes = signature_int.to_bytes(key_size_bytes, 'big')
 
         return signature_bytes
 
@@ -116,7 +110,6 @@ class BlindSignatureScheme:
         Unblind a signature (client-side operation).
 
         Converts blinded signature to valid signature over original message.
-        Formula: signature = (blinded_sig * r^-1) mod N
 
         Args:
             blinded_signature: Signature from server (bytes)
@@ -125,27 +118,28 @@ class BlindSignatureScheme:
         Returns:
             signature: Valid signature over original message (bytes)
         """
+        N = self.public_key.n
+
         # Convert blinded signature to integer
         sig_int = int.from_bytes(blinded_signature, 'big')
 
         # Compute modular inverse of blinding factor
-        # Python 3.8+ supports pow(a, -1, n) for modular inverse
-        r_inv = pow(blinding_factor, -1, self.N)
+        r_inv = pow(blinding_factor, -1, N)
 
         # Unblind: signature = (blinded_sig * r^-1) mod N
-        signature_int = (sig_int * r_inv) % self.N
+        signature_int = (sig_int * r_inv) % N
 
         # Convert back to bytes
-        signature_bytes = signature_int.to_bytes(self.key_size_bytes, 'big')
+        key_size_bytes = self.public_key.n.bit_length() // 8 + 1
+        signature_bytes = signature_int.to_bytes(key_size_bytes, 'big')
 
         return signature_bytes
 
     def verify(self, message_bytes, signature):
         """
-        Verify a blind signature (anyone can verify).
+        Verify a blind signature.
 
-        Verifies that signature is valid for message.
-        Formula: message == signature^e mod N
+        Anyone can verify using the public key.
 
         Args:
             message_bytes: Original message (bytes)
@@ -159,17 +153,18 @@ class BlindSignatureScheme:
             sig_int = int.from_bytes(signature, 'big')
 
             # Recover message: recovered = signature^e mod N
-            recovered_int = pow(sig_int, self.e, self.N)
+            e = self.public_key.e
+            N = self.public_key.n
+            recovered_int = pow(sig_int, e, N)
 
             # Convert message to integer
             message_int = int.from_bytes(message_bytes, 'big')
 
             # Compare (with padding to handle leading zeros)
-            recovered_padded = recovered_int.to_bytes(self.key_size_bytes, 'big')
-            message_padded = message_int.to_bytes(self.key_size_bytes, 'big')
+            key_size_bytes = self.public_key.n.bit_length() // 8 + 1
+            recovered_padded = recovered_int.to_bytes(key_size_bytes, 'big')
+            message_padded = message_int.to_bytes(key_size_bytes, 'big')
 
-            # For simple message recovery to work, pad the original message too
-            # In production, use proper padding schemes like PKCS#1 v2.1
             return recovered_padded == message_padded
         except:
             return False
@@ -182,8 +177,8 @@ class BlindSignatureScheme:
             dict: {"N": modulus, "e": exponent}
         """
         return {
-            "N": self.N,
-            "e": self.e
+            "N": self.public_key.n,
+            "e": self.public_key.e
         }
 
     def export_public_key_pem(self):
@@ -193,20 +188,17 @@ class BlindSignatureScheme:
         Returns:
             bytes: PEM-encoded public key
         """
-        return self.public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
+        return self.public_key.save_pkcs1()
 
 
 def generate_nonce(length=32):
     """
     Generate a cryptographically secure random nonce.
 
-    The nonce is used to:
-    - Ensure vote freshness
-    - Prevent replay attacks
-    - Prove ownership of receipt (only client knows nonce)
+    Used for:
+    - Vote freshness
+    - Replay attack prevention
+    - Receipt ownership proof
 
     Args:
         length: Nonce length in bytes (default 32 = 256 bits)
@@ -221,8 +213,7 @@ def hash_vote_with_nonce(vote_choice, nonce):
     """
     Hash vote choice with nonce for receipt verification.
 
-    Used to create vote_hash in receipt. Only client can verify because
-    only client knows the nonce.
+    Only client can verify because only client knows nonce.
 
     Args:
         vote_choice: Candidate name (str)
@@ -239,7 +230,7 @@ def hash_vote_with_nonce(vote_choice, nonce):
 
 def create_payload_for_blinding(vote_choice, nonce):
     """
-    Create the payload that will be blinded and signed.
+    Create payload for blinding and signing.
 
     Payload = vote_choice + nonce (as bytes)
 
@@ -258,7 +249,7 @@ def create_payload_for_blinding(vote_choice, nonce):
 
 def verify_payload(payload_bytes, vote_choice, nonce):
     """
-    Verify that a payload contains the expected vote and nonce.
+    Verify that a payload contains expected vote and nonce.
 
     Args:
         payload_bytes: Original payload (bytes)
@@ -273,30 +264,18 @@ def verify_payload(payload_bytes, vote_choice, nonce):
     return payload_bytes == expected_payload
 
 
-# Key persistence helper
 def serialize_private_key(private_key, password=None):
     """
-    Serialize RSA private key to PEM format (for database storage).
+    Serialize RSA private key to PEM format.
 
     Args:
-        private_key: RSA private key
-        password: Optional password for encryption (bytes)
+        private_key: RSA private key (from python-rsa)
+        password: Optional password (ignored for python-rsa)
 
     Returns:
         bytes: PEM-encoded private key
     """
-    from cryptography.hazmat.primitives import serialization
-
-    if password:
-        encryption = serialization.BestAvailableEncryption(password)
-    else:
-        encryption = serialization.NoEncryption()
-
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=encryption
-    )
+    return private_key.save_pkcs1()
 
 
 def deserialize_private_key(pem_data, password=None):
@@ -305,15 +284,9 @@ def deserialize_private_key(pem_data, password=None):
 
     Args:
         pem_data: PEM-encoded private key (bytes)
-        password: Optional password for decryption (bytes)
+        password: Optional password (ignored for python-rsa)
 
     Returns:
         private_key: RSA private key object
     """
-    from cryptography.hazmat.primitives import serialization
-
-    return serialization.load_pem_private_key(
-        pem_data,
-        password=password,
-        backend=default_backend()
-    )
+    return rsa.PrivateKey.load_pkcs1(pem_data)
