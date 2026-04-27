@@ -29,6 +29,7 @@ class TokenManager:
         self.active_tokens = set()  # Unused tokens
         self.used_tokens = set()    # Consumed tokens
         self.token_history = []     # Audit log (deleted after voting)
+        self.total_tokens_issued = 0  # Track total issued
 
     def generate_tokens(self, count, prefix="VOTE"):
         """
@@ -51,6 +52,8 @@ class TokenManager:
             token = random_bytes.hex()
             tokens.append(token)
             self.active_tokens.add(token)
+
+        self.total_tokens_issued += count
 
         # Log generation
         self.token_history.append({
@@ -113,6 +116,11 @@ class TokenManager:
             "active": len(self.active_tokens),
             "used": len(self.used_tokens)
         }
+
+    @property
+    def tokens_used(self):
+        """Get count of used tokens."""
+        return len(self.used_tokens)
 
     def is_token_used(self, token):
         """
