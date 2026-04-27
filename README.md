@@ -58,20 +58,30 @@ pip install rsa
 
 ### Run the System
 
-**Terminal 1: Start Server**
+**Option A: With Admin Panel (Recommended)**
+
 ```bash
+# Terminal: Start admin server (includes interactive panel + background server)
+python server/admin_server.py 5000 server/CANDIDATES.json
+```
+
+The admin panel provides:
+- **Real-time server status** (updated in header)
+- **Generate voting tokens** (admin menu option 1)
+- **Stop voting & save results** (admin menu option 2)
+- **View current results** (admin menu option 3)
+- **Automatic logging** to `logs/` directory
+
+**Option B: Manual Server Mode (Advanced)**
+
+```bash
+# Terminal 1: Start server only
 python server/server.py 5000 server/CANDIDATES.json
 ```
 
-Output:
-```
-Socket server is running on 0.0.0.0:5000
-Loaded 5 candidates: Aisha Rahman, Daniel Okafor, Sofia Martinez, Liam Chen, Mira Petrovic
-```
-
-**Terminal 2-4: Run Clients** (Open in separate terminals)
+**Terminal 2-N: Run Clients** (Open in separate terminals)
 ```bash
-python client.py
+python client/client.py
 ```
 
 Follow the on-screen menu:
@@ -93,18 +103,22 @@ Follow the on-screen menu:
 ```
 blockchain_voting_system/
 ├── server/
-│   ├── server.py                 # Main server (socket listener, vote handler)
-│   ├── blockchain.py             # In-memory blockchain implementation
-│   ├── crypto_utils.py           # Cryptographic utilities (SHA-256)
-│   ├── tokens.py                 # Token management utilities
-│   └── CANDIDATES.json           # Candidate list (JSON)
+│   ├── admin_server.py           # Admin panel + server (RECOMMENDED)
+│   ├── server.py                 # Backend server core
+│   ├── blockchain.py             # In-memory blockchain
+│   ├── crypto_utils.py           # RSA cryptography (python-rsa)
+│   ├── crypto_client.py          # Client crypto operations
+│   ├── tokens.py                 # Token management
+│   └── CANDIDATES.json           # Candidate list
 ├── client/
-│   └── client.py                 # Interactive voter client CLI
+│   ├── client.py                 # Interactive voter CLI
+│   └── crypto_client.py          # Client-side crypto
+├── logs/                         # Server logs directory (auto-created)
 ├── tests.py                      # Automated 7-test suite
-├── README.md                     # Installation, usage guide (this file)
-├── TECHNICAL_GUIDE.md            # Architecture, design, validation checklist
-├── requirements.txt              # Python dependencies (pytest only)
-└── venv/                         # Virtual environment (optional, local only)
+├── README.md                     # This file
+├── TECHNICAL_GUIDE.md            # Architecture & design
+├── requirements.txt              # Dependencies
+└── venv/                         # Virtual environment (optional)
 ```
 
 **Key Points:**
@@ -117,10 +131,51 @@ blockchain_voting_system/
 
 ## 💻 Usage Guide
 
+### For Administrators
+
+**Start Admin Server with Interactive Panel:**
+
+```bash
+python server/admin_server.py 5000 server/CANDIDATES.json
+```
+
+**Admin Panel Features:**
+
+1. **Real-Time Status Header** (updates every request)
+   - Server status (🟢 ACTIVE / 🔴 INACTIVE)
+   - Current uptime
+   - Voting statistics (total votes, blocks, candidates)
+   - Blockchain validity check
+   - Token usage stats
+
+2. **Menu Option 1: Get Tokens**
+   - Generate voting tokens (1-100 at a time)
+   - Display tokens on screen
+   - Save tokens to file
+   - Logged to server log file
+
+3. **Menu Option 2: Stop Voting & Save Results**
+   - Gracefully stop the server
+   - Save final voting results to JSON file
+   - Displays final vote counts and percentages
+   - Logged to server log file
+
+4. **Menu Option 3: View Current Results**
+   - Display real-time voting results
+   - Show vote counts and percentages per candidate
+   - Bar chart visualization
+
+**Logging:**
+- All server activity logged to `logs/voting_server_YYYYMMDD_HHMMSS.log`
+- Automatic log directory creation
+- Includes all client requests and responses
+- Token generation/consumption tracked
+- Results saved to `voting_results_YYYYMMDD_HHMMSS.json`
+
 ### For Voters
 
 ```bash
-python client.py
+python client/client.py
 
 # Step 1: Connect to server
 > Enter server IP (default: localhost): localhost
