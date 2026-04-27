@@ -1,915 +1,374 @@
-# Blockchain-Based Voting System - Technical Guide
+# TECHNICAL GUIDE - Blockchain Voting System (Variant A)
 
----
+This document is for the development team. It explains architecture, core processes, implementation decisions, and how the repository fulfills the academic task in your own design.
 
-## Table of Contents
+> Scope note: this is an academic study implementation, intentionally optimized for clarity and defense/demo value rather than production-scale throughput or operational hardening.
 
-1. [Introduction](#introduction)
-2. [System Architecture](#system-architecture)
-3. [Blockchain Mechanics](#blockchain-mechanics)
-4. [Core Components](#core-components)
-5. [Implementation Details](#implementation-details)
-6. [Validation Checklist](#validation-checklist-project-24-variant-a)
-7. [Testing & Validation](#testing--validation)
-8. [Security Analysis](#security-analysis)
-9. [Design Decisions](#design-decisions)
-10. [Results & Performance](#results--performance)
+## 1) System Overview
 
----
+The system is a **single-node blockchain voting platform** with **anonymous vote authorization using RSA blind signatures**.
 
-## Introduction
+Core goals implemented:
+- preserve voter privacy (server does not learn vote content during signing),
+- enforce one-time voting,
+- provide vote inclusion proof (receipt),
+- provide chain integrity verification and auditable final outputs.
 
-### Background
+Main execution roles:
+- **Admin role**: runs election, issues tokens, monitors status, stops election, exports final package.
+- **Voter role**: connects via client, obtains blind signature with token, submits signed vote, stores receipt.
+- **Server core**: validates protocol correctness, records vote block, serves verification and statistics endpoints.
 
-Blockchain technology provides immutable, transparent record-keeping through cryptographic hashing and distributed consensus. Traditional voting systems suffer from centralization, lack of transparency, and potential for fraud. This project implements a blockchain-based voting system to address these issues.
+## 2) Repository Components
 
-### Problem Statement
+### Server-side
 
-**Traditional Voting Systems:**
-- ❌ Centralized authority (single point of failure)
-- ❌ Lack of transparency (voters cannot verify their vote was counted)
-- ❌ Potential for double voting
-- ❌ No immutable audit trail
+- `server/server.py`
+  - Central request router (`handle_request`)
+  - Implements protocol actions:
+    - `get_blind_signature`
+    - `vote_secured`
+    - `verify_receipt`
+    - `results`, `validate`, `blockchain`, `statistics`, `public_key`
+    - `request_test_tokens` (test support endpoint)
 
-**This Solution:**
-- ✅ Transparent, immutable ledger
-- ✅ Voter verification via receipt hash
-- ✅ Double voting prevention
-- ✅ Complete audit trail with timestamps
+- `server/admin_server.py`
+  - Interactive election operator panel
+  - Starts socket server loop in background thread
+  - Generates and optionally saves token files
+  - Displays real-time statistics and results
+  - On stop, archives final data into `voting_results_<timestamp>.zip`
 
-### Project Requirements (Variant A)
+- `server/blockchain.py`
+  - In-memory append-only chain with genesis block
+  - Maintains `voted_hashes` set for duplicate-vote prevention
+  - Provides validation and aggregated statistics
 
-**Specification:** "A centralized blockchain ledger managed by a single node for submitting and displaying votes"
+- `server/crypto_utils.py`
+  - `BlindSignatureScheme` using RSA math on integers
+  - Generates keypair at startup
+  - Signs blinded messages and verifies signatures
 
-**Constraints:**
-- Single server node (not distributed)
-- Votes recorded immutably
-- Prevent double voting
-- Ensure transparency
-- Allow anonymous verification
+- `server/tokens.py`
+  - One-time token lifecycle manager
+  - Tracks active/used tokens and lightweight token event history
 
-**Validation Checklist:**
-- ✅ Log all vote submissions with time, hash, and unique voter ID
-- ✅ Validate that each vote appears exactly once in final ledger
-- ✅ Demonstrate verification method for voter to prove their vote was counted
-- ✅ Simulate multiple nodes accepting and verifying blocks, test consensus
+### Client-side
 
----
+- `client/client.py`
+  - Menu-driven CLI voter app
+  - Blind-signature voting flow (connect -> choose candidate -> blind -> sign -> unblind -> verify -> submit)
+  - Receipt verification and blockchain/result viewing
+  - Local receipt export
 
-## System Architecture
+- `client/crypto_client.py`
+  - Client cryptographic primitives:
+    - blinding/unblinding,
+    - signature verification with server public key,
+    - public key wrapper class.
 
-### High-Level Architecture
+### Test/support files
 
-```
-                        ┌─────────────────┐
-                        │   Client 1      │
-                        │ (voter/admin)   │
-                        └────────┬────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-            ┌───────▼──┐  ┌──────▼──┐  ┌────▼─────┐
-            │ Client 2 │  │ Client 3│  │ Client N │
-            │  (voter) │  │ (voter) │  │  (admin) │
-            └─────┬────┘  └──┬──────┘  └────┬─────┘
-                  │          │             │
-                  └──────────┼─────────────┘
-                             │ JSON over TCP
-                       (Port 5000)
-                             │
-                    ┌────────▼──────────┐
-                    │   SERVER NODE     │
-                    │  (Single Point)   │
-                    │                   │
-                    │ ┌───────────────┐ │
-                    │ │  Blockchain   │ │
-                    │ │  - Chain[]    │ │
-                    │ │  - Voted{}    │ │
-                    │ │  - Validate() │ │
-                    │ └───────────────┘ │
-                    │                   │
-                    │ ┌───────────────┐ │
-                    │ │  Candidates   │ │
-                    │ │  - CANDIDATES │ │
-                    │ │  - DETAILS    │ │
-                    │ └───────────────┘ │
-                    │                   │
-                    │ ┌───────────────┐ │
-                    │ │  Voters       │ │
-                    │ │  - Registry   │ │
-                    │ └───────────────┘ │
-                    └───────────────────┘
-```
+- `server/tests.py`
+  - End-to-end and load-oriented workflow test suite
+  - Includes setup, single-vote protocol check, concurrent voting, chain checks, result consistency.
 
-### Component Interaction Flow
+- `server/CANDIDATES.json`
+  - Candidate source of truth loaded at server initialization.
 
-```
-Registration:
-  Client → Server: {register, first_name, last_name}
-  Server → Database: Check if registered
-  Server → Client: Return voter_id or error
+## 3) Network/API Contract (JSON over TCP)
 
-Voting:
-  Client → Server: {vote, voter_id, candidate}
-  Server → Blockchain: Check if voter already voted
-  Server → Blockchain: Create block, add to chain
-  Server → Client: Return receipt hash
+Transport:
+- Plain TCP sockets
+- One JSON request per connection
+- One JSON response per connection
 
-Verification:
-  Client → Server: {verify, receipt_hash}
-  Server → Blockchain: Search for block
-  Server → Client: Return block data (no voter ID)
+Primary actions and intent:
+- `candidates` - fetch candidate list
+- `public_key` - fetch RSA public key (`N`, `e`)
+- `get_blind_signature` - consume token + sign blinded payload
+- `vote_secured` - validate signature and append vote block
+- `verify_receipt` - verify by `receipt_hash` (preferred) or legacy `vote_hash + nonce`
+- `results` - tally by candidate
+- `blockchain` - return full chain
+- `validate` - run integrity checks
+- `statistics` - votes + token statistics
+- `request_test_tokens` - generate tokens for automated tests
 
-Validation:
-  Client → Server: {validate}
-  Server → Blockchain: Validate all blocks
-  Server → Client: Return valid=True/False
+Design choice:
+- JSON action routing keeps interface simple and language-agnostic for academic demonstration.
+
+## 3.1) Architecture and Flow Diagrams (for defense)
+
+### A) Blind-signature voting flow
+
+```mermaid
+flowchart TD
+    A[Client requests server public key] --> B[Client chooses candidate and creates nonce]
+    B --> C[Build payload: len + vote + nonce]
+    C --> D[Blind payload with random factor r]
+    D --> E[Send token + blinded payload]
+    E --> F[Server validates one-time token]
+    F --> G[Server signs blinded payload]
+    G --> H[Return blinded signature]
+    H --> I[Client unblinds signature using r^-1 mod N]
+    I --> J[Client verifies signature locally]
+    J --> K[Send vote + nonce + signature]
+    K --> L[Server verifies signature and records block]
+    L --> M[Server returns digital receipt]
 ```
 
----
+### B) Blockchain vote-recording and verification flow
 
-## Blockchain Mechanics
-
-### Why Blocks Are Immutable
-
-**Hash Chain Principle:**
-
-Each block contains:
-```python
-block = {
-    "index": 5,
-    "timestamp": 1714210234.5,
-    "voter_id_hash": "a1b2c3d4e5f6g7h8...",  # SHA-256(voter_name)
-    "candidate": "Aisha Rahman",
-    "previous_hash": "x9y8z7w6...",          # ← Links to previous block
-    "hash": "a3c8f9d2e1b4c7f9..."           # SHA-256(all above data)
-}
+```mermaid
+flowchart TD
+    A[Receive vote_secured request] --> B[Validate candidate exists]
+    B --> C[Rebuild payload and verify RSA signature]
+    C --> D[Derive voter seed from nonce hash]
+    D --> E{Duplicate voter hash?}
+    E -->|Yes| F[Reject: double voting detected]
+    E -->|No| G[Create block with index/timestamp/candidate/previous_hash]
+    G --> H[Compute block SHA-256 hash]
+    H --> I[Append block to chain]
+    I --> J[Return receipt_hash + metadata]
+    K[Verify request with receipt_hash] --> L[Search block by hash]
+    L --> M{Found?}
+    M -->|Yes| N[Return valid + block metadata]
+    M -->|No| O[Return invalid]
+    P[Genesis block index 0] --> G
 ```
 
-**Immutability Mechanism:**
+### C) Socket request-response flow
 
-```
-Block 1:
-  data = "index:0 timestamp:123 voter:GENESIS candidate:GENESIS previous:0"
-  hash₁ = SHA256(data) = "abc123def456..."
-
-Block 2:
-  data = "index:1 timestamp:456 voter:voter1 candidate:Candidate_A previous:abc123def456..."
-  hash₂ = SHA256(data) = "ghi789jkl012..."
-
-Block 3:
-  data = "index:2 timestamp:789 voter:voter2 candidate:Candidate_B previous:ghi789jkl012..."
-  hash₃ = SHA256(data) = "mno345pqr678..."
-```
-
-**If Someone Tries to Tamper:**
-
-```
-Attacker modifies Block 2's candidate from "Candidate_A" to "Candidate_B":
-
-Modified Block 2:
-  data = "index:1 timestamp:456 voter:voter1 candidate:Candidate_B previous:abc123def456..."
-  new_hash₂ = SHA256(data) = "XYZ999uvw111..."  ← DIFFERENT!
-
-Block 3 now has:
-  previous_hash = "ghi789jkl012..." (still the old hash)
-  But Block 2's new hash = "XYZ999uvw111..."
-  
-  MISMATCH! Chain is broken!
-  validate_chain() returns False
+```mermaid
+sequenceDiagram
+    participant C as Voter Client
+    participant S as Voting Server Socket
+    participant H as Core Handler
+    C->>S: Open TCP connection
+    C->>S: Send JSON request (action + payload)
+    S->>H: Decode UTF-8 and route action
+    H-->>S: JSON response object
+    S-->>C: Encode UTF-8 and send response
+    C->>C: Read chunks, parse JSON, close
+    Note over C,S: One request per connection in this academic prototype
 ```
 
-**Why This Works:**
+### D) Server structure overview
 
-1. **One-way hashing:** SHA-256 cannot be reversed
-2. **Deterministic:** Same data always produces same hash
-3. **Sensitive to changes:** Even 1-bit change produces completely different hash
-4. **Chain dependency:** Each block depends on previous block's hash
-5. **Cascading effect:** Tampering one block breaks entire chain after it
-
-### Block Validation Algorithm
-
-```python
-def validate_chain(self):
-    """Validate all blocks in chain"""
-    for i in range(1, len(self.chain)):
-        current = self.chain[i]
-        previous = self.chain[i - 1]
-        
-        # Check 1: Previous hash link is intact
-        if current["previous_hash"] != previous["hash"]:
-            return False  # Chain broken!
-        
-        # Check 2: Current block's hash matches data
-        calculated_hash = self.calculate_hash(current)
-        if current["hash"] != calculated_hash:
-            return False  # Block tampered!
-    
-    return True  # All blocks valid
+```mermaid
+flowchart LR
+    CLI[AdminServerPanel UI loop] --> VS[VotingServer handle_request]
+    CLI --> LOG[logs/*.log]
+    CLI --> ZIP[voting_results_*.zip]
+    CAND[server/CANDIDATES.json] --> VS
+    CLIENT[Voter Client CLI] <--> |TCP JSON| VS
+    VS --> BC[Blockchain in-memory chain]
+    VS --> CR[BlindSignatureScheme RSA]
+    VS --> TM[TokenManager active/used tokens]
+    BC --> ZIP
 ```
 
-**Two Validation Checks:**
-1. **Link Integrity:** Does this block's `previous_hash` match the previous block's `hash`?
-2. **Data Integrity:** Does this block's `hash` match what we calculate from its data?
-
-### Genesis Block
-
-```python
-{
-    "index": 0,
-    "timestamp": <server_start_time>,
-    "voter_id_hash": "GENESIS",
-    "candidate": "GENESIS",
-    "previous_hash": "0",
-    "hash": <calculated>
-}
-```
-
-**Purpose:**
-- Starting point of blockchain
-- Provides initial `previous_hash` for Block 1
-- Cannot be tampered without breaking Chain validation
-
----
-
-## Core Components
-
-### 1. Blockchain Class (blockchain.py)
-
-**Attributes:**
-```python
-class Blockchain:
-    def __init__(self):
-        self.chain = []              # List of all blocks
-        self.voted = set()           # Set of voter hashes (for dedup)
-        self.create_block("GENESIS", "GENESIS")  # Initialize
-```
-
-**Key Methods:**
-
-| Method | Purpose | Returns |
-|--------|---------|---------|
-| `hash_text(text)` | One-way hash voter ID | SHA-256 digest |
-| `calculate_hash(block)` | Compute block hash from data | Hex string |
-| `create_block(voter_id_hash, candidate)` | Create and append block | Block dict |
-| `add_vote(voter_id, candidate)` | Add vote with dedup check | (block, message) |
-| `verify_vote(receipt)` | Find block by hash | (found, block) |
-| `validate_chain()` | Check all blocks valid | Boolean |
-| `results()` | Count votes per candidate | Dict {candidate: count} |
-
-**Data Flow:**
-```
-add_vote() workflow:
-  1. Hash voter_id → voter_id_hash
-  2. Check if voter_id_hash in self.voted
-     - If yes: Return error "already voted"
-     - If no: Continue
-  3. Create block with voter_id_hash and candidate
-  4. Append block to self.chain
-  5. Add voter_id_hash to self.voted
-  6. Return (block, "Vote accepted")
-```
-
-### 2. Server (server.py)
-
-**Global State:**
-```python
-blockchain = Blockchain()              # Single blockchain instance
-registered_voters = {}                 # Track registered voters
-CANDIDATES = []                        # Candidates from JSON
-CANDIDATES_DETAILS = []                # Full candidate data
-```
-
-**Request Handler:**
-```python
-def handle_request(request):
-    action = request.get("action")
-    
-    if action == "register":
-        # Check if name already registered
-        # Add to registered_voters
-        # Return voter_id
-    
-    elif action == "vote":
-        # Verify voter registered
-        # Verify candidate valid
-        # Call blockchain.add_vote()
-        # Return receipt or error
-    
-    elif action == "chain":
-        return full blockchain.chain
-    
-    elif action == "results":
-        return blockchain.results()
-    
-    elif action == "verify":
-        return blockchain.verify_vote(receipt)
-    
-    elif action == "validate":
-        return blockchain.validate_chain()
-```
-
-**Connection Handling:**
-```
-For each client connection:
-  1. Accept connection
-  2. Receive JSON request (with large buffer handling)
-  3. Parse request
-  4. Call handle_request()
-  5. Send JSON response (with sendall())
-  6. Close connection
-```
-
-### 3. Client (client.py)
-
-**Key Features:**
-- Menu-driven interface (7 options)
-- Connection management (custom IP/port)
-- File saving (receipts, blockchain, results)
-- Detailed validation display
-- Terminal clearing for clean UX
-
-**Request/Response Pattern:**
-```python
-def send_request(request):
-    """Send request and receive full response"""
-    s = socket.socket()
-    s.connect((HOST, PORT))
-    s.send(json.dumps(request).encode())
-    
-    # Receive all data (handle large payloads)
-    response_data = b""
-    while True:
-        chunk = s.recv(8192)
-        if not chunk:
-            break
-        response_data += chunk
-    
-    s.close()
-    return json.loads(response_data.decode())
-```
-
----
-
-## Implementation Details
-
-### Double Voting Prevention
-
-**Layer 1: Registration (Server-side)**
-```python
-registered_voters = {}
-
-if action == "register":
-    voter_id = f"{first_name}_{last_name}"
-    
-    if voter_id in registered_voters:  # Already registered
-        return error("already registered")
-    
-    registered_voters[voter_id] = {...}
-    return success(voter_id)
-```
-
-**Layer 2: Blockchain (Ledger-level)**
-```python
-class Blockchain:
-    def __init__(self):
-        self.voted = set()  # Track voter hashes
-    
-    def add_vote(self, voter_id, candidate):
-        voter_id_hash = self.hash_text(voter_id)
-        
-        if voter_id_hash in self.voted:  # Already voted
-            return None, "This voter has already voted"
-        
-        block = self.create_block(voter_id_hash, candidate)
-        self.voted.add(voter_id_hash)  # Mark as voted
-        return block, "Vote accepted"
-```
-
-**Why Two Layers:**
-- **Registration check:** Prevents re-registration (UX)
-- **Blockchain check:** Prevents blockchain manipulation (security)
-- **Hashing:** Voter name hashed in blockchain (anonymity)
-
-### Voter Anonymity
-
-**Mechanism:**
-```python
-# Client knows:
-voter_id = "John_Doe"  # In memory only
-
-# Server knows:
-voter_id = "John_Doe"  # For registration check
-registered_voters["John_Doe"] = {...}
-
-# Blockchain records:
-voter_id_hash = SHA256("John_Doe") = "a1b2c3d4e5f6g7h8..."  # One-way hash
-
-# Public sees:
-{
-    "voter_id_hash": "a1b2c3d4e5f6g7h8...",  # Can't reverse
-    "candidate": "Aisha Rahman",               # Public vote
-    "timestamp": 1714210234.5
-}
-```
-
-**Properties:**
-- ✅ Voter cannot be identified from voter_id_hash (one-way)
-- ✅ Vote is public (transparency)
-- ✅ Voter cannot deny their vote (commitment)
-- ✅ Others cannot link voter to vote (privacy)
-
-### Vote Verification
-
-**Receipt System:**
-```
-Step 1: Vote submitted
-  Server returns: receipt = block["hash"]
-  
-Step 2: Voter saves receipt
-  Example: a3c8f9d2e1b4c7f9a3c8f9d2e1b4c7f9
-  
-Step 3: Voter wants to verify
-  Client sends: {verify, receipt: "a3c8f9d2e1..."}
-  
-Step 4: Server searches blockchain
-  for each block in blockchain.chain:
-    if block["hash"] == receipt:
-      return block
-  
-Step 5: Voter sees result
-  ✓ Vote found: Aisha Rahman (timestamp: 14:35:22)
-  Voter confirms: "Yes, that's who I voted for"
-```
-
-**No Identity Leak:**
-- Server returns only: candidate, timestamp, (NO voter name)
-- Voter knows their own name, so can confirm
-- Others cannot link receipt to person (anonymous)
-
-### Consensus in Single-Node Context
-
-**What "Consensus" Means Here:**
-- Single node maintains authoritative chain
-- All clients accept this chain as ground truth
-- Implicit consensus: Node is authority
-
----
-
-## Validation Checklist (Project 24 Variant A)
-
-### Requirement 1: Log all vote submissions with time, hash, and unique voter ID
-
-**✅ IMPLEMENTED**
-
-**Evidence:**
-```python
-# Each block contains:
-{
-    "timestamp": 1714210234.5,            # Time
-    "hash": "a3c8f9d2e1b4c7f9...",       # Hash
-    "voter_id_hash": "a1b2c3d4..."       # Unique voter ID (hashed)
-}
-```
-
-**Test:**
-```bash
-python admin_test.py localhost 5000
-# TEST 1: BASIC VOTING
-# ✓ Vote 1: Test_Voter_0 voted for Aisha Rahman (timestamp: 14:35:22)
-# ✓ Vote 2: Test_Voter_1 voted for Daniel Okafor (timestamp: 14:35:23)
-```
-
-**Manual Verification:**
-```bash
-python client.py
-→ Option 4: Show Blockchain
-# See all blocks with: timestamp, hash, candidate, voter_id_hash
-```
-
----
-
-### Requirement 2: Validate that each vote appears exactly once in final ledger
-
-**✅ IMPLEMENTED**
-
-**Mechanism:**
-```python
-# Deduplication check:
-unique_voters = len(set(voter_id_hashes))
-total_votes = len(voter_id_hashes)
-assert unique_voters == total_votes  # Must be equal
-```
-
-**Test:**
-```bash
-python admin_test.py localhost 5000
-# TEST 5: VOTE DEDUPLICATION
-# Total votes: 25
-# Unique voters: 25
-# ✓ NO DUPLICATES - Each voter voted exactly once
-```
-
-**Double Voting Prevention Tests:**
-```bash
-# TEST 2: Double Voting Prevention
-# Try voting twice with same person:
-# ✓ First vote submitted
-# ✓ Double vote BLOCKED: "This voter has already voted"
-# ✓ Re-registration BLOCKED: "John Doe is already registered"
-```
-
-**Manual Verification:**
-```bash
-python client.py
-→ Register: John Doe
-→ Vote for Aisha Rahman (Success)
-→ Try to vote again (Error: Already voted)
-→ New client, Register: John Doe (Error: Already registered)
-```
-
----
-
-### Requirement 3: Demonstrate verification method for voter to prove their vote was counted
-
-**✅ IMPLEMENTED**
-
-**Method: Digital Receipt (Block Hash)**
-
-```
-Verification Flow:
-  1. User votes
-  2. Gets receipt: "a3c8f9d2e1b4c7f9a3c8f9d2e1b4c7f9"
-  3. Option to save receipt to file (default: Yes)
-  4. Later, retrieve receipt
-  5. Option 6: Verify Vote
-  6. Enter receipt hash
-  7. Server finds block and returns: candidate, timestamp
-  8. User confirms: "Yes, I voted for Aisha Rahman"
-```
-
-**Test:**
-```bash
-python admin_test.py localhost 5000
-# TEST 7: VOTE VERIFICATION
-# ✓ Vote verified: Aisha Rahman (timestamp: 14:35:22)
-# Receipts are searched in blockchain and found
-```
-
-**Manual Verification:**
-```bash
-python client.py
-→ Option 3: Submit Vote
-→ Get receipt: a3c8f9d2e1b4c7f9...
-→ Save to file: John_Doe_receipt.txt
-→ Option 6: Verify Vote
-→ Enter receipt: a3c8f9d2e1b4c7f9...
-→ ✓ Vote found in blockchain!
-→ Candidate: Aisha Rahman
-```
-
-**Why This Proves Vote Was Counted:**
-- Receipt is deterministic: SHA256(block_data)
-- Can't forge receipt without modifying blockchain
-- But modifying blockchain breaks hash chain
-- So receipt = proof that vote was in blockchain
-
-**Privacy Maintained:**
-- User's name not in receipt
-- User must provide own receipt to verify
-- Others can't verify someone else's vote
-- Vote is verified without revealing identity
-
----
-
-### Requirement 4: Simulate multiple nodes accepting and verifying blocks, test consensus
-
-**✅ IMPLEMENTED**
-
-**Single-Node Implicit Consensus:**
-- One server = authoritative
-- All clients trust this server's chain
-
-**Simulated Multi-Node payload (Test 3):**
-```bash
-python admin_test.py localhost 5000
-# TEST 3: CONCURRENT VOTING
-# 2 concurrent clients, 3 votes each = 6 total votes
-# Simulates multiple "nodes" (threads) submitting blocks
-# 
-# [Client 0] Vote 1: Aisha Rahman
-# [Client 1] Vote 1: Daniel Okafor
-# [Client 0] Vote 2: Sofia Martinez
-# [Client 1] Vote 2: Aisha Rahman
-# [Client 0] Vote 3: Liam Chen
-# [Client 1] Vote 3: Mira Petrovic
-#
-# ✓ All 6 votes recorded in single blockchain
-# ✓ Chain integrity maintained
-# ✓ No conflicts or missing votes
-```
-
-**Chain Integrity Tests:**
-```bash
-# TEST 4: CHAIN INTEGRITY
-# All block hashes verified: ✓
-# All chain links valid: ✓
-# No broken blocks: ✓
-
-# TEST 6: RESULTS ACCURACY
-# Server results match manual count: ✓
-# Vote totals consistent: ✓
-```
-
-
----
-
-## Testing & Validation
-
-### Automated Test Suite (admin_test.py)
-
-**7 Comprehensive Tests:**
-
-| Test | Focus | Success Criteria |
-|------|-------|------------------|
-| 1. Basic Voting | Submit 100 votes sequentially | All votes recorded |
-| 2. Double Voting Prevention | Prevent same person voting twice | 2nd vote blocked, re-registration blocked |
-| 3. Concurrent Voting | 10 clients, 20 votes each simultaneously | All 6 votes recorded, no conflicts |
-| 4. Chain Integrity | Validate all block hashes and links | All hashes verified, all links intact |
-| 5. Vote Deduplication | Verify each vote appears once | Unique voters = total votes |
-| 6. Results Accuracy | Verify vote counts | Server results match manual count |
-| 7. Vote Verification | Test receipt verification | Receipts found in blockchain |
-
-**Running Tests:**
-```bash
-python admin_test.py localhost 5000
-# Output: Detailed results for each test
-# File saved: admin_test_log.txt
-```
-
----
-
-## Security Analysis
-
-### Implemented Security
-
-**1. Voter Anonymity ✅**
-- Voter names hashed with SHA-256
-- Only voter_id_hash stored in blockchain
-- One-way hash cannot be reversed
-- Anonymous but accountable (can't deny vote)
-
-**2. Double Voting Prevention ✅**
-- Registration check: Name uniqueness
-- Blockchain check: voter_id_hash uniqueness
-- Two-layer defense
-- Set lookup O(1) performance
-
-**3. Immutable Records ✅**
-- Hash chains link all blocks
-- Tampering breaks chain
-- 7-step validation detects any modification
-- SHA-256 cryptographically secure
-
-**4. Transparency ✅**
-- Public blockchain (anyone can view)
-- Public results (vote counts transparent)
-- Public verification (anyone can verify any vote)
-- Open access, no privileged users
-
-**5. Vote Verification ✅**
-- Receipt = block hash (deterministic, unforgeable)
-- Voter gets receipt, can verify anytime
-- No identity revealed in verification
-- Cryptographically secure
-
-### Limitations & Not Implemented
-
-**⚠️ Centralization**
-- Single server = single point of failure
-- No redundancy or backup
-- Mitigation: Could replicate to backup server
-- Future: RAFT consensus for multi-node
-
-**⚠️ No Cryptographic Signatures**
-- Votes not digitally signed
-- Server could theoretically modify votes
-- Mitigation: All actions logged with timestamps
-- Future: Add RSA/ECDSA signatures
-
-**⚠️ No Merkle Proofs**
-- Receipt verification requires server query
-- No batch/anonymous proof system
-- Future: Add Merkle tree for proofs
-
-**⚠️ No Persistence**
-- Blockchain in memory only
-- Resets on server restart
-- Mitigation: Could add SQLite/PostgreSQL
-- Future: Add database backend
-
-**⚠️ No Authentication**
-- No user passwords or MFA
-- Anyone can vote as anyone
-- Mitigation: In academic context (trusted lab)
-- Future: Add OAuth2/JWT authentication
-
----
-
-## Design Decisions
-
-### Architecture Choice: Centralized Single-Node
-
-**Rationale:**
-- Project requirement: "managed by a single node"
-- Simplifies implementation and testing
-- Sufficient for academic project
-- Clear demonstration of blockchain mechanics
-
-**Trade-offs:**
-- ❌ Not fully distributed
-- ❌ Single point of failure
-- ✅ Easier to understand and implement
-- ✅ Suitable for controlled voting (academic exam)
-
-### Protocol: JSON over Raw Sockets
-
-**Why Not HTTP/REST:**
-- JSON over raw sockets is simpler
-- Demonstrates socket programming
-- Lower overhead
-- More control over serialization
-
-**Why Not gRPC/Protobuf:**
-- Overkill for academic project
-- Adds unnecessary complexity
-- JSON human-readable for debugging
-
-**Receiver Implementation:**
-- Multiple recv() calls in loop until socket closes
-- Handles large payloads (large blockchains)
-- Proper TCP/IP semantics
-
-### Voter Identification: Name-Based (FirstName_LastName)
-
-**Why Not UUID:**
-- User-friendly (humans remember names)
-- Natural uniqueness constraint
-- Demonstrates duplicate prevention
-- Can hash for blockchain (anonymity)
-
-**Why Not Email/Phone:**
-- Simpler for academic context
-- No external data needed
-- Demonstrates key concept clearly
-
-### Consensus: Implicit Single-Node
-
-**Why Not Multi-Node RAFT:**
-- Project specified single node
-- RAFT complex for academic project
-- Can be added in future variant
-
-**Simulated Consensus:**
-- Concurrent voting tests multiple "nodes"
-- Demonstrates vote ordering and consistency
-- Proves blockchain works under load
-
-### File Naming: NameSurname_Option.txt
-
-**Examples:**
-- `John_Doe_receipt.txt` - Vote receipt
-- `John_Doe_blockchain.txt` - Full chain
-- `John_Doe_results.txt` - Vote counts
-
-**Rationale:**
-- User-friendly (knows which file is theirs)
-- Unique across voters
-- Compatible with filesystem
-
----
-
-## Results & Performance
-
-### Functional Results
-
-**All Validation Checklist Items: ✅ COMPLETE**
-
-```
-Project 24 Variant A - Validation Checklist Status:
-
-✅ Log all vote submissions with time, hash, unique voter ID
-   Evidence: Each block has {timestamp, hash, voter_id_hash}
-   Test: admin_test.py TEST 1
-   Manual: Client Option 4 (Show Blockchain)
-
-✅ Validate each vote appears exactly once
-   Evidence: Deduplication via voter_id_hash set
-   Test: admin_test.py TEST 5 (Vote Deduplication)
-   Manual: Verify unique voters = total votes
-
-✅ Demonstrate verification method
-   Evidence: Receipt-based verification (block hash)
-   Test: admin_test.py TEST 7 (Vote Verification)
-   Manual: Client Option 6 (Verify Vote)
-
-✅ Simulate multi-node consensus and testing
-   Evidence: Concurrent voting simulation
-   Test: admin_test.py TEST 3 (Concurrent Voting)
-   Proof: All concurrent votes recorded, chain valid
-```
-
-### Performance Metrics
-
-| Metric | Value | Notes |
-|--------|-------|-------|
-| **Votes/sec (sequential)** | ~50-100 | Single client |
-| **Concurrent clients** | 10+ tested | No conflicts |
-| **Chain validation time** | ~5ms/1000 blocks | Linear complexity |
-| **Block creation time** | <1ms | SHA-256 fast |
-| **Storage per vote** | ~500 bytes | In-memory |
-| **Max blockchain size** | Limited by RAM | ~100K votes in 64MB |
-
-### Test Results Summary
-
-```
-Test Results (admin_test.py):
-✅ TEST 1: BASIC VOTING
-   - 5 votes submitted sequentially
-   - All recorded successfully
-   - PASS
-
-✅ TEST 2: DOUBLE VOTING PREVENTION
-   - First vote accepted
-   - Second vote blocked
-   - Re-registration blocked
-   - PASS
-
-✅ TEST 3: CONCURRENT VOTING
-   - 2 clients, 3 votes each
-   - 6 total votes submitted concurrently
-   - All recorded in correct order
-   - PASS
-
-✅ TEST 4: CHAIN INTEGRITY
-   - 26 blocks validated
-   - All hashes verified
-   - All links intact
-   - PASS
-
-✅ TEST 5: VOTE DEDUPLICATION
-   - Total votes: 25
-   - Unique voters: 25
-   - No duplicates
-   - PASS
-
-✅ TEST 6: RESULTS ACCURACY
-   - Server results match manual count
-   - Vote totals consistent
-   - PASS
-
-✅ TEST 7: VOTE VERIFICATION
-   - Receipts found in blockchain
-   - Voter identity not revealed
-   - PASS
-
-Overall Status: ✅ ALL TESTS PASSED
-```
-
----
-
-## Appendix: Complete Validation Checklist
-
-### ✅ Project 24 Variant A - Requirements Met
-
-| Requirement | Implementation | Evidence | Status |
-|---|---|---|---|
-| Centralized single-node | server.py (single instance) | Code: line 9 | ✅ |
-| Vote logging with time | Block.timestamp | Code: blockchain.py:25 | ✅ |
-| Vote logging with hash | Block.hash | Code: blockchain.py:32 | ✅ |
-| Vote logging with voter ID | Block.voter_id_hash | Code: blockchain.py:18 | ✅ |
-| Immutable ledger | Hash chains | Code: validate_chain():66 | ✅ |
-| Prevent double voting | Voter hash tracking | Code: blockchain.py:39-43 | ✅ |
-| Each vote appears once | Deduplication | Code: add_vote():36-45 | ✅ |
-| Transparency | Public blockchain access | Code: server.py:119-122 | ✅ |
-| Anonymous verification | Receipt-based | Code: verify_vote():59-64 | ✅ |
-| Multi-node simulation | Concurrent voting test | Code: admin_test.py:181 | ✅ |
-| Consensus testing | Test 3 & 4 & 5 & 6 | Code: admin_test.py:98-278 | ✅ |
-
-**Overall Score: 11/11 Requirements ✅ COMPLETE**
-
----
-
-## Conclusion
-
-This blockchain-based voting system successfully implements Project 24 Variant A requirements:
-
-✅ **Centralized blockchain ledger** managed by single server node  
-✅ **Immutable vote records** protected by hash chains  
-✅ **Double voting prevention** through multi-layer checks  
-✅ **Vote transparency** with public blockchain access  
-✅ **Voter verification** using cryptographic receipts  
-✅ **Anonymous voting** with voter name hashing  
-✅ **Comprehensive testing** with 7-test admin suite  
-
-The system demonstrates core blockchain concepts while remaining simple enough for academic understanding. It provides a foundation for future enhancements toward full decentralization and multi-node consensus.
+## 4) End-to-End Voting Protocol (Implemented)
+
+### Phase A - Authorization for signing
+1. Voter receives one-time token from admin.
+2. Client asks server for public key.
+3. Client creates payload:
+   - `len(vote_bytes)` (2 bytes) + `vote_bytes` + `nonce(32 bytes)`.
+4. Client blinds payload with random blinding factor.
+5. Client sends `get_blind_signature` with token and blinded payload.
+6. Server validates/consumes token and signs blinded message.
+
+### Phase B - Vote submission
+7. Client unblinds signature locally.
+8. Client verifies signature locally before submission.
+9. Client submits `vote_secured` with clear vote + nonce + unblinded signature.
+10. Server reconstructs payload and verifies signature with same RSA public key.
+11. If valid, server hashes nonce-derived identity and appends blockchain block.
+12. Server returns receipt containing block hash and metadata.
+
+Key privacy property:
+- Server signs blinded payload, so it cannot link signing-time token validation to clear vote content cryptographically.
+
+## 5) Blockchain Model and Data Design
+
+Block fields:
+- `index`
+- `timestamp`
+- `voter_id_hash`
+- `candidate`
+- `previous_hash`
+- `hash`
+
+Genesis block:
+- index `0`, sentinel values (`GENESIS`), bootstrap hash.
+
+Hashing and deduplication flow:
+- In `vote_secured`, server computes `sha256(nonce)` as anonymous voter seed.
+- `Blockchain.add_vote()` hashes that input again into stored `voter_id_hash`.
+- Deduplication uses set membership (`voted_hashes`) to reject repeated voter hashes.
+
+Validation checks in `validate_chain()`:
+- duplicate voter hash detection,
+- previous-hash link continuity,
+- per-block hash recomputation consistency.
+
+Design choice:
+- This is a **single-node educational blockchain** (not distributed consensus). It emphasizes immutability and tamper evidence over decentralization.
+
+## 6) Token Lifecycle and One-Time Vote Control
+
+Generation:
+- Admin panel (`option 1`) or test endpoint generates random 256-bit tokens.
+
+Consumption:
+- Token is consumed only at `get_blind_signature`.
+- Reuse triggers explicit rejection (`Token already used`).
+
+Why this design:
+- A valid signed vote must originate from a consumed token.
+- Token is not submitted in final vote payload, reducing direct linkability.
+
+## 7) Receipt and Verifiability Model
+
+On success, server returns receipt object with:
+- `receipt_hash` (block hash),
+- `vote_hash` (`sha256(vote_bytes + nonce)`),
+- `nonce_hex`,
+- block metadata (`index`, `timestamp`),
+- mode marker.
+
+Verification modes:
+- Preferred: `receipt_hash` lookup in chain.
+- Backward-compatible: find block by derived voter hash and compare expected `vote_hash`.
+
+Team note:
+- `receipt_hash` path should be treated as canonical in UI/docs for simpler and safer verification.
+
+## 8) Concurrency and Runtime Behavior
+
+Server:
+- Admin wrapper accepts connections and spawns per-client threads.
+- Blockchain writes are lock-protected (`threading.Lock`) in `add_vote`.
+
+Implication:
+- Concurrent vote submissions are supported while preserving append consistency and duplicate-vote checks.
+
+## 9) Logging, Outputs, and Artifacts
+
+Runtime logging:
+- `logs/voting_server_<timestamp>.log` from admin server.
+
+Client artifacts:
+- `client/receipts/receipt_<timestamp>.json`
+- `client/exports/blockchain_<timestamp>.json`
+
+Final election package (admin stop):
+- `results.json` (totals, ranking, winner metadata)
+- `blockchain.json` (full chain snapshot + validity flag)
+- `winner.txt` (human-readable summary)
+- zipped as `voting_results_<timestamp>.zip`
+
+## 10) Mapping to Variant A Requirements (Implemented Interpretation)
+
+Based on your implementation and naming, your Variant A interpretation is:
+- blockchain-backed vote ledger,
+- voter anonymity via blind signatures,
+- one-time eligibility mechanism (tokens),
+- receipt-based voter verifiability,
+- post-election audit package and integrity validation,
+- stress/concurrency testing.
+
+Important clarification:
+- The prototype is not a decentralized peer-to-peer blockchain network.
+- It is a centralized election authority with blockchain-like immutable log semantics.
+
+## 10.1) Variant A Requirement Checklist
+
+- `[Implemented]` Blockchain-based vote ledger with immutable hash-linked blocks in memory.
+- `[Implemented]` Anonymous authorization using RSA blind signatures (server signs blinded payload).
+- `[Implemented]` One-time voter eligibility via single-use random tokens.
+- `[Implemented]` Vote inclusion proof via receipt (`receipt_hash`) and server-side verification.
+- `[Implemented]` Blockchain integrity validation (hash links, block hash recomputation, duplicate checks).
+- `[Implemented]` Election operator workflow (token generation, monitoring, final result package export).
+- `[Implemented]` Client voter workflow (connect, vote, verify receipt, inspect blockchain/results).
+- `[Implemented]` Stress/concurrency testing workflow in `server/tests.py`.
+- `[Partially implemented]` End-to-end privacy posture: cryptographic anonymity is implemented, but transport is plain TCP without TLS.
+- `[Partially implemented]` Auditability: verifiable receipts and exported artifacts exist, but no external notarization or independent verifier service.
+- `[Out of scope]` Decentralized consensus / multi-node blockchain network.
+- `[Out of scope]` Production IAM/SSO, hardened key management (HSM/KMS), and operational security controls.
+
+## 11) Security and Trust Assumptions
+
+Current assumptions:
+- Admin/server host is trusted to run unmodified software.
+- Transport is plain TCP (no TLS), suitable for lab/testing environment.
+- Tokens are distributed securely outside system scope.
+
+Threats mitigated:
+- duplicate voting by same nonce-derived identity,
+- token replay,
+- chain tampering detection (post-write).
+
+Threats not fully mitigated in current scope:
+- network eavesdropping / MITM,
+- malicious server operator behavior,
+- full coercion-resistance / end-to-end cryptographic auditing.
+
+## 12) Known Design Trade-offs
+
+- **In-memory chain**
+  - Fast and simple for coursework.
+  - Volatile unless exported; no crash recovery journal.
+
+- **No distributed consensus**
+  - Easy to understand and demo.
+  - Not equivalent to production public blockchain trust model.
+
+- **Raw RSA blind-signature flow**
+  - Clear educational implementation.
+  - Requires careful payload size handling and secure transport in real deployments.
+
+## 13) Demo Script for Presentation Day (human-run)
+
+Suggested role split:
+1. **Presenter A (Admin operator)**: runs `server/admin_server.py` and controls election lifecycle.
+2. **Presenter B (Voter 1)**: runs first `client/client.py` session and performs a full vote.
+3. **Presenter C (Voter 2 / Auditor)**: runs second client session, verifies receipt, checks blockchain and validation.
+
+Live demo sequence:
+1. Admin starts server and shows loaded candidates.
+2. Admin generates tokens and distributes 2-3 sample tokens to voter presenters.
+3. Voter 1 connects, votes through blind-signature flow, and saves receipt file.
+4. Voter 2 repeats with a different candidate.
+5. Auditor client opens "Verify Receipt" and proves one stored receipt exists on chain.
+6. Auditor shows "See Blockchain" and "Validate Blockchain" outputs.
+7. Admin opens current results view.
+8. Admin stops voting and saves final zip package.
+
+Evidence to show to evaluator:
+- Token one-time behavior (attempt reuse and show rejection).
+- Receipt-based verification success.
+- Blockchain validity check success.
+- Final packaged outputs: `results.json`, `blockchain.json`, `winner.txt`.
+- Logs file in `logs/` showing request lifecycle.
+
+## 14) How Team Members Should Operate the System
+
+Suggested team workflow:
+1. Start admin server.
+2. Generate and distribute tokens.
+3. Run one or more client sessions to cast votes.
+4. Validate chain and monitor results during voting.
+5. Stop election from admin panel and archive output package.
+6. Optionally run `server/tests.py` for demonstrable test evidence.
+
+## 15) Future Improvements (for report/discussion, not yet implemented)
+
+- Add TLS sockets to protect transport confidentiality/integrity.
+- Persist blockchain and token state to durable storage (with signed checkpoints).
+- Add admin authentication/authorization boundary.
+- Add cryptographic election parameters config (key rotation, election IDs).
+- Add protocol transcript proofs for stronger end-to-end auditability.
+- Separate APIs and domain models from CLI for easier integration testing.
