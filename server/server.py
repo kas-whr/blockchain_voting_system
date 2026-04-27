@@ -1,221 +1,319 @@
+"""
+Voting Server with RSA Blind Signature Support
+
+Handles:
+- Blind signature requests (sign without seeing vote)
+- Secured vote submissions (with signature verification)
+- Results and verification requests
+- Blockchain integrity validation
+"""
+
 import socket
 import json
 import sys
+import time
+from server_config import DatabaseConfig, DatabaseConnection, init_database
 from blockchain import Blockchain
-
-HOST = "0.0.0.0"
-PORT = 5000
-
-blockchain = Blockchain()
-
-registered_voters = {}
-
-CANDIDATES = []
-CANDIDATES_DETAILS = []
+from crypto_utils import BlindSignatureScheme, serialize_private_key, deserialize_private_key
+from tokens import TokenManager
+import hashlib
 
 
-def load_candidates(filename):
-    """Load candidates from JSON file"""
-    try:
-        with open(filename, 'r') as f:
-            candidates_data = json.load(f)
-            if isinstance(candidates_data, list):
-                names = [c.get("FullName") for c in candidates_data if "FullName" in c]
-                return names, candidates_data
-            else:
-                print("Error: Invalid candidates file format")
-                sys.exit(1)
-    except FileNotFoundError:
-        print(f"Error: Candidates file '{filename}' not found")
-        sys.exit(1)
-    except json.JSONDecodeError:
-        print("Error: Invalid JSON in candidates file")
-        sys.exit(1)
+class VotingServer:
+    """Main voting server."""
 
+    def __init__(self, host="0.0.0.0", port=5000, candidates_file="server/CANDIDATES.json"):
+        """Initialize voting server."""
+        self.host = host
+        self.port = port
+        self.candidates_file = candidates_file
+        self.candidates = []
+        self.blockchain = None
+        self.crypto_scheme = None
+        self.token_manager = TokenManager()
+        self.voting_started = False
 
-def handle_request(request):
-    action = request.get("action")
-
-    if action == "register":
-        first_name = request.get("first_name")
-        last_name = request.get("last_name")
-
-        if not first_name or not last_name:
-            return {
-                "status": "error",
-                "message": "first_name and last_name are required"
-            }
-
-        voter_id = f"{first_name}_{last_name}"
-
-        if voter_id in registered_voters:
-            return {
-                "status": "error",
-                "message": f"{first_name} {last_name} is already registered"
-            }
-
-        registered_voters[voter_id] = {
-            "first_name": first_name,
-            "last_name": last_name
-        }
-
-        return {
-            "status": "success",
-            "message": "Registration successful",
-            "voter_id": voter_id,
-            "candidates": CANDIDATES
-        }
-
-    elif action == "vote":
-        voter_id = request.get("voter_id")
-        candidate = request.get("candidate")
-
-        if not voter_id or not candidate:
-            return {
-                "status": "error",
-                "message": "voter_id and candidate are required"
-            }
-
-        if voter_id not in registered_voters:
-            return {
-                "status": "error",
-                "message": "Voter is not registered"
-            }
-
-        if candidate not in CANDIDATES:
-            return {
-                "status": "error",
-                "message": "Invalid candidate",
-                "allowed_candidates": CANDIDATES
-            }
-
-        block, message = blockchain.add_vote(voter_id, candidate)
-
-        if block is None:
-            return {
-                "status": "error",
-                "message": message
-            }
-
-        return {
-            "status": "success",
-            "message": message,
-            "receipt": block["hash"],
-            "block": block
-        }
-
-    elif action == "candidates":
-        return {
-            "status": "success",
-            "candidates": CANDIDATES
-        }
-
-    elif action == "candidates_details":
-        return {
-            "status": "success",
-            "candidates": CANDIDATES_DETAILS
-        }
-
-    elif action == "chain":
-        return {
-            "status": "success",
-            "chain": blockchain.chain
-        }
-
-    elif action == "results":
-        return {
-            "status": "success",
-            "results": blockchain.results()
-        }
-
-    elif action == "verify":
-        receipt = request.get("receipt")
-
-        if not receipt:
-            return {
-                "status": "error",
-                "message": "receipt is required"
-            }
-
-        found, block = blockchain.verify_vote(receipt)
-
-        if not found:
-            return {
-                "status": "error",
-                "valid": False,
-                "message": "Vote not found"
-            }
-
-        return {
-            "status": "success",
-            "valid": True,
-            "message": "Vote exists in blockchain",
-            "block": block
-        }
-
-    elif action == "validate":
-        return {
-            "status": "success",
-            "valid": blockchain.validate_chain()
-        }
-
-    else:
-        return {
-            "status": "error",
-            "message": "Unknown action"
-        }
-
-
-def start_server(port, candidates_file):
-    global CANDIDATES, CANDIDATES_DETAILS
-
-    CANDIDATES, CANDIDATES_DETAILS = load_candidates(candidates_file)
-
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((HOST, port))
-    server_socket.listen()
-
-    print(f"Socket server is running on {HOST}:{port}")
-    print(f"Loaded {len(CANDIDATES)} candidates: {', '.join(CANDIDATES)}")
-
-    while True:
-        client_socket, address = server_socket.accept()
-        print(f"Connected by {address}")
-
+    def load_candidates(self):
+        """Load candidates from JSON file."""
+        import json
         try:
-            data = client_socket.recv(4096).decode()
+            with open(self.candidates_file, 'r') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    self.candidates = [c.get("FullName", c.get("name", str(c))) for c in data]
+                    return True
+                else:
+                    print("Error: Invalid candidates file format")
+                    return False
+        except FileNotFoundError:
+            print(f"Error: Candidates file '{self.candidates_file}' not found")
+            return False
+        except json.JSONDecodeError:
+            print("Error: Invalid JSON in candidates file")
+            return False
+
+    def initialize(self):
+        """Initialize server components."""
+        # Initialize database
+        try:
+            config = DatabaseConfig()
+            DatabaseConnection.initialize(config)
+            init_database(config)
+            print("✓ Database initialized")
+        except Exception as e:
+            print(f"✗ Database error: {e}")
+            return False
+
+        # Initialize blockchain
+        try:
+            self.crypto_scheme = BlindSignatureScheme()
+            self.blockchain = Blockchain(crypto_scheme=self.crypto_scheme)
+            print("✓ Blockchain initialized")
+        except Exception as e:
+            print(f"✗ Blockchain error: {e}")
+            return False
+
+        # Load candidates
+        if not self.load_candidates():
+            return False
+
+        print(f"✓ Candidates loaded: {', '.join(self.candidates)}")
+        return True
+
+    def handle_request(self, request_data):
+        """Handle incoming client request."""
+        try:
+            request = json.loads(request_data)
+        except json.JSONDecodeError:
+            return {"status": "error", "message": "Invalid JSON"}
+
+        action = request.get("action")
+
+        # ========== BLIND SIGNATURE REQUEST (Secured Mode) ==========
+        if action == "get_blind_signature":
+            token = request.get("token")
+            blinded_data = request.get("blinded_data")
+
+            if not token or not blinded_data:
+                return {"status": "error", "message": "Missing token or blinded_data"}
+
+            try:
+                # Validate and consume token
+                self.token_manager.validate_and_consume(token)
+
+                # Decode blinded_data from hex
+                blinded_bytes = bytes.fromhex(blinded_data)
+
+                # Sign blinded data (server doesn't know what it's signing!)
+                blinded_signature = self.crypto_scheme.sign_blinded(blinded_bytes)
+
+                return {
+                    "status": "success",
+                    "blinded_signature": blinded_signature.hex(),
+                    "public_key": {
+                        "N": str(self.crypto_scheme.N),
+                        "e": self.crypto_scheme.e
+                    }
+                }
+            except ValueError as e:
+                return {"status": "error", "message": str(e)}
+            except Exception as e:
+                return {"status": "error", "message": f"Signing error: {e}"}
+
+        # ========== SECURED VOTE SUBMISSION ==========
+        elif action == "vote_secured":
+            vote_choice = request.get("vote")
+            nonce_hex = request.get("nonce")
+            signature_hex = request.get("signature")
+
+            if not vote_choice or not nonce_hex or not signature_hex:
+                return {"status": "error", "message": "Missing vote, nonce, or signature"}
+
+            if vote_choice not in self.candidates:
+                return {
+                    "status": "error",
+                    "message": "Invalid candidate",
+                    "allowed_candidates": self.candidates
+                }
+
+            try:
+                # Decode nonce and signature from hex
+                nonce = bytes.fromhex(nonce_hex)
+                signature = bytes.fromhex(signature_hex)
+
+                # Add to blockchain (verifies signature)
+                block = self.blockchain.add_vote(vote_choice, nonce, signature)
+
+                # Compute vote hash for receipt
+                vote_bytes = vote_choice.encode('utf-8')
+                vote_hash = hashlib.sha256(vote_bytes + nonce).hexdigest()
+
+                # Create receipt
+                receipt = {
+                    "vote_hash": vote_hash,
+                    "nonce_hex": nonce_hex,
+                    "signature_hex": signature_hex,
+                    "timestamp": block["timestamp"],
+                    "block_index": block["index"],
+                    "mode": "secured"
+                }
+
+                return {
+                    "status": "success",
+                    "message": "Vote accepted",
+                    "receipt": receipt,
+                    "block_index": block["index"]
+                }
+            except ValueError as e:
+                return {"status": "error", "message": str(e)}
+            except Exception as e:
+                return {"status": "error", "message": f"Voting error: {e}"}
+
+        # ========== GET CANDIDATES ==========
+        elif action == "candidates":
+            return {
+                "status": "success",
+                "candidates": self.candidates
+            }
+
+        # ========== GET VOTING RESULTS ==========
+        elif action == "results":
+            results = self.blockchain.results()
+            return {
+                "status": "success",
+                "results": results,
+                "total_votes": self.blockchain.get_vote_count()
+            }
+
+        # ========== VERIFY RECEIPT ==========
+        elif action == "verify_receipt":
+            vote_hash = request.get("vote_hash")
+            nonce_hex = request.get("nonce")
+
+            if not vote_hash or not nonce_hex:
+                return {"status": "error", "message": "Missing vote_hash or nonce"}
+
+            try:
+                found, block = self.blockchain.verify_vote(vote_hash)
+
+                if not found:
+                    return {
+                        "status": "error",
+                        "valid": False,
+                        "message": "Vote not found in blockchain"
+                    }
+
+                return {
+                    "status": "success",
+                    "valid": True,
+                    "message": "Vote verified in blockchain",
+                    "block": block
+                }
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+        # ========== GET BLOCKCHAIN ==========
+        elif action == "blockchain":
+            try:
+                chain = self.blockchain.get_chain()
+                return {
+                    "status": "success",
+                    "blockchain": chain,
+                    "length": len(chain)
+                }
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+        # ========== VALIDATE BLOCKCHAIN ==========
+        elif action == "validate":
+            try:
+                valid, errors = self.blockchain.validate_chain()
+                return {
+                    "status": "success",
+                    "valid": valid,
+                    "errors": errors if errors else []
+                }
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+        # ========== GET STATISTICS ==========
+        elif action == "statistics":
+            try:
+                stats = self.blockchain.get_statistics()
+                token_stats = self.token_manager.get_token_stats()
+
+                return {
+                    "status": "success",
+                    "votes": stats,
+                    "tokens": token_stats
+                }
+            except Exception as e:
+                return {"status": "error", "message": str(e)}
+
+        else:
+            return {"status": "error", "message": f"Unknown action: {action}"}
+
+    def handle_client(self, client_socket, address):
+        """Handle single client connection."""
+        try:
+            # Receive request
+            data = client_socket.recv(4096).decode('utf-8')
 
             if not data:
-                continue
+                return
 
-            request = json.loads(data)
-            response = handle_request(request)
+            # Process request
+            response = self.handle_request(data)
 
-        except json.JSONDecodeError:
-            response = {
-                "status": "error",
-                "message": "Invalid JSON"
-            }
+            # Send response
+            response_json = json.dumps(response)
+            client_socket.sendall(response_json.encode('utf-8'))
 
-        except Exception as error:
-            response = {
-                "status": "error",
-                "message": str(error)
-            }
+        except Exception as e:
+            error_response = {"status": "error", "message": str(e)}
+            try:
+                client_socket.sendall(json.dumps(error_response).encode('utf-8'))
+            except:
+                pass
+        finally:
+            client_socket.close()
 
-        # Properly send response (handle large payloads)
-        response_json = json.dumps(response)
-        response_bytes = response_json.encode()
+    def start(self):
+        """Start voting server."""
+        if not self.initialize():
+            sys.exit(1)
 
-        # Send response size first, then data
-        client_socket.sendall(response_bytes)
-        client_socket.close()
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind((self.host, self.port))
+        server_socket.listen(5)
+
+        print(f"✓ Socket server listening on {self.host}:{self.port}")
+        print(f"  Loaded {len(self.candidates)} candidates")
+        print()
+
+        try:
+            while True:
+                client_socket, address = server_socket.accept()
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Connected by {address[0]}:{address[1]}")
+
+                try:
+                    self.handle_client(client_socket, address)
+                except Exception as e:
+                    print(f"Error handling client: {e}")
+
+        except KeyboardInterrupt:
+            print("\n✓ Server stopped")
+        finally:
+            server_socket.close()
+            DatabaseConnection.close_all()
 
 
-if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python server.py PORT CANDIDATES_FILE.json")
-        print("Example: python server.py 5000 CANDIDATES.json")
+def main():
+    """Main entry point."""
+    if len(sys.argv) < 2:
+        print("Usage: python server.py PORT [CANDIDATES_FILE]")
+        print("Example: python server.py 5000 server/CANDIDATES.json")
         sys.exit(1)
 
     try:
@@ -224,6 +322,11 @@ if __name__ == "__main__":
         print("Error: PORT must be an integer")
         sys.exit(1)
 
-    candidates_file = sys.argv[2]
+    candidates_file = sys.argv[2] if len(sys.argv) > 2 else "server/CANDIDATES.json"
 
-    start_server(port, candidates_file)
+    server = VotingServer(port=port, candidates_file=candidates_file)
+    server.start()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,77 +1,323 @@
+"""
+Enhanced Blockchain for Anonymous Voting
+
+This blockchain stores votes in PostgreSQL with:
+- Immutable voting records (database triggers prevent deletion/modification)
+- Signature verification for secured votes
+- Chain integrity validation
+- Audit logging
+"""
+
 import hashlib
 import time
+from server_config import execute_query, execute_many
+from crypto_utils import verify_payload, hash_vote_with_nonce
 
 
 class Blockchain:
-    def __init__(self):
-        self.chain = []
-        self.voted = set()
-        self.create_block("GENESIS", "GENESIS")
+    """
+    PostgreSQL-backed immutable blockchain for voting.
 
-    def hash_text(self, text):
-        return hashlib.sha256(text.encode()).hexdigest()
+    Properties:
+    - Append-only: votes can only be added, never deleted
+    - Immutable: votes cannot be modified (database triggers enforce)
+    - Verifiable: signatures and hashes can be verified
+    - Auditable: all operations logged
+    """
 
-    def calculate_hash(self, block):
+    def __init__(self, crypto_scheme=None):
+        """
+        Initialize blockchain.
+
+        Args:
+            crypto_scheme: BlindSignatureScheme instance (for verification)
+        """
+        self.crypto_scheme = crypto_scheme
+        self.current_index = self._get_next_index()
+
+    def _get_next_index(self):
+        """Get next block index from database."""
+        result = execute_query(
+            "SELECT MAX(block_index) FROM blockchain_votes",
+            fetch_one=True
+        )
+        max_index = result[0] if result and result[0] is not None else 0
+        return max_index + 1
+
+    def _calculate_block_hash(self, vote_choice, nonce, signature, previous_hash):
+        """
+        Calculate block hash (for chain integrity).
+
+        Hash over: (block_index, vote_choice, nonce, signature, previous_hash)
+        """
         data = (
-            str(block["index"])
-            + str(block["timestamp"])
-            + block["voter_id_hash"]
-            + block["candidate"]
-            + block["previous_hash"]
+            str(self.current_index) +
+            vote_choice +
+            nonce.hex() +
+            signature.hex() +
+            previous_hash
         )
         return hashlib.sha256(data.encode()).hexdigest()
 
-    def create_block(self, voter_id_hash, candidate):
-        block = {
-            "index": len(self.chain),
-            "timestamp": time.time(),
-            "voter_id_hash": voter_id_hash,
-            "candidate": candidate,
-            "previous_hash": self.chain[-1]["hash"] if self.chain else "0",
+    def _get_previous_hash(self):
+        """Get hash of previous block."""
+        result = execute_query(
+            "SELECT block_hash FROM blockchain_votes WHERE block_index = %s",
+            (self.current_index - 1,),
+            fetch_one=True
+        )
+        if result:
+            return result[0]
+        return "GENESIS_HASH"  # For genesis block
+
+    def add_vote(self, vote_choice, nonce, signature=None):
+        """
+        Add a vote to the blockchain.
+
+        Args:
+            vote_choice: Candidate name (str)
+            nonce: Random nonce from client (bytes)
+            signature: RSA signature over (vote_choice + nonce) (bytes, optional)
+
+        Returns:
+            dict: Block data
+
+        Raises:
+            ValueError: If vote is invalid
+        """
+        # Verify signature if provided (secured mode)
+        if signature:
+            if not self.crypto_scheme:
+                raise ValueError("No crypto scheme configured")
+
+            payload = vote_choice.encode() + nonce
+            if not self.crypto_scheme.verify(payload, signature):
+                raise ValueError("Invalid signature")
+
+        # Calculate vote hash
+        vote_hash = hash_vote_with_nonce(vote_choice, nonce)
+
+        # Get previous hash
+        previous_hash = self._get_previous_hash()
+
+        # Calculate block hash
+        block_hash = self._calculate_block_hash(
+            vote_choice,
+            nonce,
+            signature or b'',
+            previous_hash
+        )
+
+        # Insert into database
+        query = """
+            INSERT INTO blockchain_votes
+            (vote_choice, nonce, signature, vote_hash, block_index, previous_hash, block_hash)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
+        """
+        params = (
+            vote_choice,
+            nonce,
+            signature,
+            vote_hash,
+            self.current_index,
+            previous_hash,
+            block_hash
+        )
+
+        result = execute_query(query, params, fetch_one=True)
+
+        # Increment index for next vote
+        self.current_index += 1
+
+        return {
+            "id": result[0],
+            "index": self.current_index - 1,
+            "vote": vote_choice,
+            "nonce": nonce,
+            "signature": signature,
+            "vote_hash": vote_hash,
+            "previous_hash": previous_hash,
+            "hash": block_hash,
+            "timestamp": result[1].timestamp() if result[1] else time.time()
         }
-        block["hash"] = self.calculate_hash(block)
-        self.chain.append(block)
-        return block
 
-    def add_vote(self, voter_id, candidate):
-        voter_id_hash = self.hash_text(voter_id)
+    def verify_vote(self, vote_hash):
+        """
+        Verify that a vote exists in the blockchain.
 
-        if voter_id_hash in self.voted:
-            return None, "This voter has already voted"
+        Args:
+            vote_hash: SHA256(vote_choice + nonce) from receipt
 
-        block = self.create_block(voter_id_hash, candidate)
-        self.voted.add(voter_id_hash)
+        Returns:
+            tuple: (found: bool, block: dict or None)
+        """
+        result = execute_query(
+            """SELECT id, vote_choice, vote_hash, block_index, block_hash, created_at
+               FROM blockchain_votes WHERE vote_hash = %s""",
+            (vote_hash,),
+            fetch_one=True
+        )
 
-        return block, "Vote accepted"
-
-    def results(self):
-        counts = {}
-
-        for block in self.chain:
-            if block["candidate"] == "GENESIS":
-                continue
-
-            candidate = block["candidate"]
-            counts[candidate] = counts.get(candidate, 0) + 1
-
-        return counts
-
-    def verify_vote(self, receipt):
-        for block in self.chain:
-            if block["hash"] == receipt:
-                return True, block
+        if result:
+            return True, {
+                "id": result[0],
+                "vote": result[1],
+                "vote_hash": result[2],
+                "block_index": result[3],
+                "block_hash": result[4],
+                "timestamp": result[5]
+            }
 
         return False, None
 
+    def get_vote_by_block_hash(self, block_hash):
+        """Get vote by block hash."""
+        result = execute_query(
+            """SELECT id, vote_choice, vote_hash, block_index, block_hash, created_at
+               FROM blockchain_votes WHERE block_hash = %s""",
+            (block_hash,),
+            fetch_one=True
+        )
+
+        if result:
+            return {
+                "id": result[0],
+                "vote": result[1],
+                "vote_hash": result[2],
+                "block_index": result[3],
+                "block_hash": result[4],
+                "timestamp": result[5]
+            }
+
+        return None
+
+    def results(self):
+        """
+        Get vote counts by candidate.
+
+        Returns:
+            dict: {candidate: count, ...}
+        """
+        results_data = execute_query(
+            """SELECT vote_choice, COUNT(*) as count
+               FROM blockchain_votes
+               WHERE block_index > 0
+               GROUP BY vote_choice
+               ORDER BY count DESC""",
+            fetch_all=True
+        )
+
+        return {row[0]: row[1] for row in results_data} if results_data else {}
+
+    def get_chain(self):
+        """
+        Get entire blockchain.
+
+        Returns:
+            list: All blocks in order
+        """
+        blocks = execute_query(
+            """SELECT id, block_index, vote_choice, vote_hash, block_hash, previous_hash, created_at
+               FROM blockchain_votes
+               ORDER BY block_index ASC""",
+            fetch_all=True
+        )
+
+        chain = []
+        for block in blocks:
+            chain.append({
+                "id": block[0],
+                "index": block[1],
+                "vote": block[2],
+                "vote_hash": block[3],
+                "hash": block[4],
+                "previous_hash": block[5],
+                "timestamp": block[6]
+            })
+
+        return chain
+
     def validate_chain(self):
-        for i in range(1, len(self.chain)):
-            current = self.chain[i]
-            previous = self.chain[i - 1]
+        """
+        Validate entire blockchain integrity.
+
+        Checks:
+        1. Each block's hash is correct
+        2. Each block links to previous block correctly
+        3. No missing blocks
+        4. No duplicate hashes
+
+        Returns:
+            tuple: (valid: bool, errors: list)
+        """
+        errors = []
+
+        chain = self.get_chain()
+
+        # Check 1: Genesis block
+        if not chain or chain[0]["vote"] != "GENESIS":
+            errors.append("Missing or invalid genesis block")
+            return False, errors
+
+        # Check 2: No gaps in block indices
+        for i, block in enumerate(chain):
+            if block["index"] != i:
+                errors.append(f"Block index gap at position {i}: expected {i}, got {block['index']}")
+
+        # Check 3: Hash links are valid
+        for i in range(1, len(chain)):
+            current = chain[i]
+            previous = chain[i - 1]
 
             if current["previous_hash"] != previous["hash"]:
-                return False
+                errors.append(
+                    f"Block {i} not linked to previous: "
+                    f"previous_hash={current['previous_hash']}, "
+                    f"previous.hash={previous['hash']}"
+                )
 
-            if current["hash"] != self.calculate_hash(current):
-                return False
+        # Check 4: No duplicate hashes
+        hashes = [block["hash"] for block in chain]
+        if len(hashes) != len(set(hashes)):
+            errors.append("Duplicate block hashes detected")
 
-        return True
+        return len(errors) == 0, errors
+
+    def get_statistics(self):
+        """Get blockchain statistics."""
+        result = execute_query(
+            """SELECT
+                COUNT(*) as total_blocks,
+                COUNT(DISTINCT vote_choice) as unique_candidates,
+                MIN(created_at) as first_vote,
+                MAX(created_at) as last_vote
+               FROM blockchain_votes
+               WHERE block_index > 0""",
+            fetch_one=True
+        )
+
+        if result:
+            return {
+                "total_blocks": result[0],
+                "total_votes": result[0] - 1,  # Exclude genesis
+                "unique_candidates": result[1],
+                "first_vote": result[2],
+                "last_vote": result[3]
+            }
+
+        return {
+            "total_blocks": 1,
+            "total_votes": 0,
+            "unique_candidates": 0,
+            "first_vote": None,
+            "last_vote": None
+        }
+
+    def get_vote_count(self):
+        """Get total number of votes cast."""
+        result = execute_query(
+            "SELECT COUNT(*) FROM blockchain_votes WHERE block_index > 0",
+            fetch_one=True
+        )
+        return result[0] if result else 0
