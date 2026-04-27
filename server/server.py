@@ -12,9 +12,8 @@ import socket
 import json
 import sys
 import time
-from server_config import DatabaseConfig, DatabaseConnection, init_database
 from blockchain import Blockchain
-from crypto_utils import BlindSignatureScheme, serialize_private_key, deserialize_private_key
+from crypto_utils import BlindSignatureScheme
 from tokens import TokenManager
 import hashlib
 
@@ -54,16 +53,6 @@ class VotingServer:
 
     def initialize(self):
         """Initialize server components."""
-        # Initialize database
-        try:
-            config = DatabaseConfig()
-            DatabaseConnection.initialize(config)
-            init_database(config)
-            print("✓ Database initialized")
-        except Exception as e:
-            print(f"✗ Database error: {e}")
-            return False
-
         # Initialize blockchain
         try:
             self.crypto_scheme = BlindSignatureScheme()
@@ -306,7 +295,6 @@ class VotingServer:
             print("\n✓ Server stopped")
         finally:
             server_socket.close()
-            DatabaseConnection.close_all()
 
 
 def main():

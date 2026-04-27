@@ -2,6 +2,6 @@
 # The system uses only Python standard library for core functionality
 # No external dependencies required for production
 
-# Development and testing dependencies (optional)
+# Optional: Testing dependencies
 pytest>=7.0
 pytest-cov>=4.0

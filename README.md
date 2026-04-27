@@ -26,16 +26,28 @@ A **centralized blockchain-based voting system** where votes are submitted by cl
 ### Prerequisites
 
 - Python 3.8+
-- No external dependencies (uses only Python stdlib)
+- No external dependencies for core system (uses only Python stdlib)
+- All data stored in RAM (no database required)
 
-### Installation
+### Installation & Setup
+
+**Option 1: Using Virtual Environment (Recommended)**
 
 ```bash
-# Clone or extract the project
-cd blockchain_voting_system
+# Linux/Mac
+python3 -m venv venv
+source venv/bin/activate
 
-# No additional installation required
-# System uses only built-in Python libraries
+# Windows
+python -m venv venv
+venv\Scripts\activate
+```
+
+**Option 2: Direct Python (No Virtual Environment)**
+
+```bash
+# Just run directly with system Python
+# No installation needed - uses only built-in libraries
 ```
 
 ### Run the System
@@ -75,21 +87,25 @@ Follow the on-screen menu:
 ```
 blockchain_voting_system/
 ├── server/
-│   ├── server.py                 # Main server (handles votes, validation)
-│   ├── blockchain.py             # Core blockchain logic
-│   ├── crypto_utils.py           # Cryptographic utilities
-│   ├── server_config.py          # Database configuration
-│   ├── tokens.py                 # Token management
-│   └── CANDIDATES.json           # Candidate list
+│   ├── server.py                 # Main server (socket listener, vote handler)
+│   ├── blockchain.py             # In-memory blockchain implementation
+│   ├── crypto_utils.py           # Cryptographic utilities (SHA-256)
+│   ├── tokens.py                 # Token management utilities
+│   └── CANDIDATES.json           # Candidate list (JSON)
 ├── client/
-│   └── client.py                 # Interactive client application
+│   └── client.py                 # Interactive voter client CLI
 ├── tests.py                      # Automated 7-test suite
-├── README.md                     # Installation, usage, quick start
+├── README.md                     # Installation, usage guide (this file)
 ├── TECHNICAL_GUIDE.md            # Architecture, design, validation checklist
-├── requirements.txt              # Python dependencies
-├── setup_venv.sh                 # Virtual environment setup script
-└── venv/                         # Virtual environment (local)
+├── requirements.txt              # Python dependencies (pytest only)
+└── venv/                         # Virtual environment (optional, local only)
 ```
+
+**Key Points:**
+- ✅ **No database files** - All votes stored in RAM during execution
+- ✅ **All data in memory** - Blockchain lives in server process memory
+- ✅ **No external dependencies** - Core system uses Python stdlib only
+- ✅ **Academic project** - Designed to teach distributed network concepts
 
 ---
 
@@ -279,29 +295,30 @@ All communication uses JSON over TCP sockets.
 
 ## 🧪 Testing
 
-### Setup Virtual Environment
+### Setup Virtual Environment (Optional)
 
 ```bash
-# Option 1: Run setup script (Linux/Mac)
-bash setup_venv.sh
-
-# Option 2: Manual setup
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or
-venv\Scripts\activate  # Windows
 
-# Install test dependencies
+# Activate virtual environment
+# Linux/Mac:
+source venv/bin/activate
+
+# Windows:
+venv\Scripts\activate
+
+# Install test dependencies (optional)
 pip install -r requirements.txt
 ```
 
 ### Automated Tests (Recommended)
 
 ```bash
-# Ensure server is running first
+# Ensure server is running first (Terminal 1)
 python server/server.py 5000 server/CANDIDATES.json
 
-# In another terminal, run tests
+# In another terminal, run tests (Terminal 2)
 python tests.py localhost 5000
 ```
 
@@ -343,8 +360,13 @@ python server/server.py 5000 server/CANDIDATES.json
 ```bash
 # Make sure CANDIDATES.json exists in server directory
 ls server/CANDIDATES.json
-# Or specify full path
-python server.py 5000 /home/user/repository/server/CANDIDATES.json
+```
+
+### Issue: "Data lost after server restart"
+```
+# This is expected - all data is stored in RAM
+# Data persists for the duration of the server process
+# To preserve votes between sessions, save results before shutting down
 ```
 
 ---
@@ -355,6 +377,8 @@ python server.py 5000 /home/user/repository/server/CANDIDATES.json
 |------|---------|
 | **README.md** | Installation, usage, API reference, troubleshooting (this file) |
 | **TECHNICAL_GUIDE.md** | Architecture, blockchain mechanics, validation checklist, security analysis |
+
+**Note:** This is an academic project designed for learning. Documentation is intentionally simple and focused.
 
 ---
 
