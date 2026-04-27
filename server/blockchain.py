@@ -7,6 +7,7 @@ All data stored in RAM during server execution.
 
 import hashlib
 import time
+import threading
 from collections import defaultdict
 
 
@@ -24,6 +25,7 @@ class Blockchain:
         self.voted_hashes = set()
         self.current_index = 0
         self.crypto_scheme = crypto_scheme
+        self._lock = threading.Lock()
         self._create_genesis_block()
 
     def _create_genesis_block(self):
@@ -76,38 +78,39 @@ class Blockchain:
         # Hash the voter ID for anonymity
         voter_id_hash = hashlib.sha256(voter_id.encode()).hexdigest()
 
-        # Check for duplicate votes
-        if voter_id_hash in self.voted_hashes:
-            return None
+        with self._lock:
+            # Check for duplicate votes
+            if voter_id_hash in self.voted_hashes:
+                return None
 
-        # Get the previous block's hash
-        previous_hash = self._get_previous_hash()
+            # Get the previous block's hash
+            previous_hash = self._get_previous_hash()
 
-        # Calculate this block's hash
-        block_hash = self._calculate_hash(
-            self.current_index,
-            timestamp,
-            voter_id_hash,
-            candidate,
-            previous_hash
-        )
+            # Calculate this block's hash
+            block_hash = self._calculate_hash(
+                self.current_index,
+                timestamp,
+                voter_id_hash,
+                candidate,
+                previous_hash
+            )
 
-        # Create the block
-        block = {
-            "index": self.current_index,
-            "timestamp": timestamp,
-            "voter_id_hash": voter_id_hash,
-            "candidate": candidate,
-            "previous_hash": previous_hash,
-            "hash": block_hash
-        }
+            # Create the block
+            block = {
+                "index": self.current_index,
+                "timestamp": timestamp,
+                "voter_id_hash": voter_id_hash,
+                "candidate": candidate,
+                "previous_hash": previous_hash,
+                "hash": block_hash
+            }
 
-        # Add to blockchain
-        self.chain.append(block)
-        self.voted_hashes.add(voter_id_hash)
-        self.current_index += 1
+            # Add to blockchain
+            self.chain.append(block)
+            self.voted_hashes.add(voter_id_hash)
+            self.current_index += 1
 
-        return block
+            return block
 
     def verify_vote(self, receipt_hash):
         """

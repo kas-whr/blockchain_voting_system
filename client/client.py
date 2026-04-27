@@ -183,11 +183,22 @@ def submit_vote():
     # Step 2: Get server's public key for blinding
     print()
     print("  Step 2: Getting server public key...")
-    key_response = send_request({"action": "statistics"})
-
+    key_response = send_request({"action": "public_key"})
     if key_response.get("status") != "success":
-        # For now, create a dummy one - server will provide it in blind_signature response
-        pass
+        print(f"  ✗ Error: {key_response.get('message')}")
+        input("  Press Enter to continue...")
+        return
+
+    try:
+        key_data = key_response.get("public_key", {})
+        server_pubkey = RSAPublicKeyClient(
+            N=int(key_data["N"]),
+            e=int(key_data["e"])
+        )
+    except Exception as e:
+        print(f"  ✗ Invalid public key from server: {e}")
+        input("  Press Enter to continue...")
+        return
 
     # Step 3: Get candidates
     print("  Step 3: Selecting candidate...")
@@ -236,16 +247,9 @@ def submit_vote():
     vote_bytes = vote_choice.encode('utf-8')
     payload = len(vote_bytes).to_bytes(2, 'big') + vote_bytes + nonce
 
-    # We need the server's public key to blind
-    # For now, we'll get a dummy key and use it
     try:
-        # Create a temporary crypto client to handle blinding
-        # We'll get the real public key from the server response
-        pubkey = RSAPublicKeyClient(
-            N=2**2048 - 1,  # Placeholder
-            e=65537
-        )
-        crypto_client = CryptoClient(pubkey)
+        # Use server public key from Step 2 for the full blind-sign flow
+        crypto_client = CryptoClient(server_pubkey)
 
         blinded_data, blinding_factor = crypto_client.blind(payload)
         print(f"  ✓ Vote blinded")
@@ -276,18 +280,18 @@ def submit_vote():
 
     print(f"  ✓ Received blinded signature from server")
 
-    # Update crypto client with real public key
-    pubkey = RSAPublicKeyClient(
-        N=int(pubkey_dict['N']),
-        e=pubkey_dict['e']
-    )
-    crypto_client = CryptoClient(pubkey)
+    # Sanity-check returned key matches key used to blind payload.
+    if str(server_pubkey.N) != str(pubkey_dict.get("N")) or server_pubkey.e != int(pubkey_dict.get("e")):
+        print("  ✗ Server public key changed during protocol")
+        input("  Press Enter to continue...")
+        return
 
     # Step 7: Unblind signature (client-side)
     print()
     print("  Step 7: Unblinding signature (client-side)...")
 
     try:
+        crypto_client.blinding_factor = blinding_factor
         signature = crypto_client.unblind(blinded_signature)
         print(f"  ✓ Signature unblinded")
     except Exception as e:
@@ -355,19 +359,69 @@ def verify_receipt():
     print_header("VERIFY VOTE RECEIPT")
     print()
 
-    vote_hash = input("  Enter vote hash (from receipt): ").strip()
-    nonce_hex = input("  Enter nonce (from receipt): ").strip()
+    # Fast path: load receipt JSON and verify automatically.
+    load_file = input("  Load receipt from JSON file? (y/n): ").strip().lower()
+    if load_file == "y":
+        receipt_path = input("  Enter receipt file path: ").strip()
+        if not receipt_path:
+            print("  ✗ Receipt file path is required")
+            input("  Press Enter to continue...")
+            return
+        try:
+            with open(receipt_path, "r") as f:
+                saved_receipt = json.load(f)
+            request = {"action": "verify_receipt"}
+            if saved_receipt.get("receipt_hash"):
+                request["receipt_hash"] = saved_receipt.get("receipt_hash")
+            elif saved_receipt.get("vote_hash") and (saved_receipt.get("nonce_hex") or saved_receipt.get("nonce")):
+                request["vote_hash"] = saved_receipt.get("vote_hash")
+                request["nonce_hex"] = saved_receipt.get("nonce_hex", saved_receipt.get("nonce"))
+            else:
+                print("  ✗ Receipt file missing required fields")
+                input("  Press Enter to continue...")
+                return
+            response = send_request(request)
+            print_header("VERIFICATION RESULT")
+            print()
+            if response.get("valid"):
+                block = response.get("block", {})
+                print(f"  ✓ Vote found in blockchain!")
+                print()
+                print(f"  Block Index:   {block.get('block_index')}")
+                print(f"  Block Hash:    {block.get('block_hash')[:16]}...")
+                print(f"  Timestamp:     {block.get('timestamp')}")
+            else:
+                print(f"  ✗ Vote not found in blockchain")
+                print(f"  Message: {response.get('message')}")
+            print()
+            input("  Press Enter to continue...")
+            return
+        except Exception as e:
+            print(f"  ✗ Failed to read receipt file: {e}")
+            input("  Press Enter to continue...")
+            return
 
-    if not vote_hash or not nonce_hex:
-        print("  ✗ Vote hash and nonce required")
-        input("  Press Enter to continue...")
-        return
+    print("  Preferred: enter one receipt hash string (receipt_hash / block_hash).")
+    print("  Legacy: leave blank and use vote_hash + nonce.")
+    print()
+    receipt_hash = input("  Enter receipt hash: ").strip()
 
-    response = send_request({
-        "action": "verify_receipt",
-        "vote_hash": vote_hash,
-        "nonce": nonce_hex
-    })
+    request = {"action": "verify_receipt"}
+    if receipt_hash:
+        request["receipt_hash"] = receipt_hash
+    else:
+        vote_hash = input("  Enter vote hash (from receipt): ").strip()
+        nonce_hex = input("  Enter nonce_hex (from receipt): ").strip()
+        if not vote_hash or not nonce_hex:
+            print("  ✗ Receipt hash or vote_hash+nonce required")
+            input("  Press Enter to continue...")
+            return
+        request["vote_hash"] = vote_hash
+        # Send both keys for compatibility with old/new server handlers.
+        request["nonce"] = nonce_hex
+        request["nonce_hex"] = nonce_hex
+
+    response = send_request(request)
 
     print_header("VERIFICATION RESULT")
     print()
@@ -382,6 +436,50 @@ def verify_receipt():
     else:
         print(f"  ✗ Vote not found in blockchain")
         print(f"  Message: {response.get('message')}")
+
+    print()
+    input("  Press Enter to continue...")
+
+
+def show_blockchain():
+    """Display blockchain and optionally save to file."""
+    print_header("BLOCKCHAIN VIEW")
+    print()
+
+    response = send_request({"action": "blockchain"})
+    if response.get("status") != "success":
+        print(f"  ✗ Error: {response.get('message')}")
+        print()
+        input("  Press Enter to continue...")
+        return
+
+    chain = response.get("blockchain", [])
+    print(f"  Total blocks: {len(chain)}")
+    if len(chain) <= 1:
+        print("  No vote blocks yet (only genesis).")
+    else:
+        print(f"  Vote blocks: {len(chain) - 1}")
+        print()
+        print("  Last 5 blocks:")
+        for block in chain[-5:]:
+            print(f"    idx={block.get('index')} cand={block.get('candidate')} hash={str(block.get('hash', ''))[:16]}...")
+
+    print()
+    save = input("  Save full blockchain to file? (y/n): ").strip().lower()
+    if save == "y":
+        try:
+            os.makedirs("exports", exist_ok=True)
+            timestamp = int(time.time())
+            filename = f"exports/blockchain_{timestamp}.json"
+            with open(filename, "w") as f:
+                json.dump({
+                    "saved_at": timestamp,
+                    "length": len(chain),
+                    "blockchain": chain
+                }, f, indent=2)
+            print(f"  ✓ Blockchain saved to {filename}")
+        except Exception as e:
+            print(f"  ✗ Failed to save blockchain: {e}")
 
     print()
     input("  Press Enter to continue...")
@@ -467,8 +565,9 @@ def show_main_menu():
         options = {
             "1": "Submit Vote (Blind Signature)",
             "2": "Verify Receipt",
-            "3": "View Results",
-            "4": "Validate Blockchain",
+            "3": "See Blockchain (and export)",
+            "4": "View Results",
+            "5": "Validate Blockchain",
             "0": "Disconnect & Exit"
         }
 
@@ -481,8 +580,10 @@ def show_main_menu():
         elif choice == "2":
             verify_receipt()
         elif choice == "3":
-            show_results()
+            show_blockchain()
         elif choice == "4":
+            show_results()
+        elif choice == "5":
             validate_blockchain()
         elif choice == "0":
             print_header("GOODBYE")

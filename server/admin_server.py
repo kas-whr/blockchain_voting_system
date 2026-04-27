@@ -13,8 +13,10 @@ import json
 import sys
 import os
 import time
+import select
 import threading
 import logging
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from server import VotingServer
@@ -31,6 +33,7 @@ class AdminServerPanel:
         self.voting_server = None
         self.server_thread = None
         self.voting_active = True
+        self.panel_active = True
         self.last_status_update = 0
 
         # Setup logging
@@ -284,26 +287,66 @@ class AdminServerPanel:
         print()
         print("    ⏹️  Stopping server...")
 
-        # Save results
+        # Collect final data
         results = self.voting_server.blockchain.results()
         chain = self.voting_server.blockchain.chain
+        chain_valid = self.voting_server.blockchain.validate_chain()["valid"]
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_file = f"voting_results_{timestamp}.json"
+        total_votes = max(0, len(chain) - 1)
+        ranked = sorted(results.items(), key=lambda x: x[1], reverse=True)
+        winner = ranked[0][0] if ranked else "No votes"
 
         results_data = {
             "timestamp": timestamp,
-            "total_votes": len(chain) - 1,
+            "total_votes": total_votes,
             "results": results,
-            "blockchain_valid": self.voting_server.blockchain.validate_chain()["valid"],
-            "candidates": self.voting_server.candidates
+            "ranked_results": [
+                {
+                    "rank": idx + 1,
+                    "candidate": candidate,
+                    "votes": count,
+                    "percentage": round((count / total_votes * 100), 2) if total_votes > 0 else 0.0
+                }
+                for idx, (candidate, count) in enumerate(ranked)
+            ],
+            "winner": winner,
+            "blockchain_valid": chain_valid,
+            "total_blocks": len(chain),
+            "candidates": self.voting_server.candidates,
+            "mode": "single-node blockchain"
         }
 
-        with open(results_file, 'w') as f:
-            json.dump(results_data, f, indent=2)
+        blockchain_data = {
+            "timestamp": timestamp,
+            "length": len(chain),
+            "blockchain_valid": chain_valid,
+            "blockchain": chain
+        }
 
-        print(f"    ✅ Results saved to: {results_file}")
-        self.logger.info(f"Voting stopped. Results saved to {results_file}")
+        winner_lines = []
+        winner_lines.append("RANKED VOTING RESULTS")
+        winner_lines.append("=" * 40)
+        winner_lines.append(f"Timestamp: {timestamp}")
+        winner_lines.append(f"Total votes: {total_votes}")
+        winner_lines.append(f"Winner: {winner}")
+        winner_lines.append("")
+        if ranked:
+            for idx, (candidate, count) in enumerate(ranked, start=1):
+                pct = (count / total_votes * 100) if total_votes > 0 else 0.0
+                winner_lines.append(f"{idx}. {candidate} - {count} votes ({pct:.2f}%)")
+        else:
+            winner_lines.append("No votes recorded.")
+        winner_txt = "\n".join(winner_lines) + "\n"
+
+        package_file = f"voting_results_{timestamp}.zip"
+        with zipfile.ZipFile(package_file, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("results.json", json.dumps(results_data, indent=2))
+            zf.writestr("blockchain.json", json.dumps(blockchain_data, indent=2))
+            zf.writestr("winner.txt", winner_txt)
+
+        print(f"    ✅ Results package saved to: {package_file}")
+        self.logger.info(f"Voting stopped. Results package saved to {package_file}")
 
         # Display final results
         print()
@@ -320,6 +363,7 @@ class AdminServerPanel:
         print()
 
         self.voting_active = False
+        self.panel_active = False
         input("    Press Enter to exit...")
 
     def show_menu(self):
@@ -332,16 +376,24 @@ class AdminServerPanel:
         print("    3. View current results")
         print("    0. Exit without stopping server")
         print()
+        print("  (Status auto-refreshes every 3 seconds)")
+        print("  Select option (0-3): ", end="", flush=True)
 
-        choice = input("  Select option (0-3): ").strip()
-        return choice
+        # Non-blocking input wait with refresh timeout.
+        ready, _, _ = select.select([sys.stdin], [], [], 3.0)
+        if ready:
+            return sys.stdin.readline().strip()
+        return None
 
     def run_admin_loop(self):
         """Main admin panel loop."""
-        while self.voting_active:
+        self.panel_active = True
+        while self.voting_active and self.panel_active:
             self.display_header()
 
             choice = self.show_menu()
+            if choice is None:
+                continue
 
             if choice == '1':
                 self.get_tokens()
@@ -351,11 +403,26 @@ class AdminServerPanel:
                 self.display_results()
                 input("  Press Enter to continue...")
             elif choice == '0':
-                print("\n  Exiting admin panel...")
-                self.voting_active = False
+                print("\n  Exiting admin panel (server stays running)...")
+                self.panel_active = False
             else:
                 print("  ❌ Invalid option. Please try again.")
                 time.sleep(1)
+
+    def show_server_status_wait(self):
+        """Keep server status visible, refresh every 3 seconds."""
+        while self.voting_active:
+            self.display_header()
+            print("  🟢 Server is still running.")
+            print("  Press Enter to re-enter admin panel.")
+            print("  Press Ctrl+C to stop server.")
+            print()
+            print("  Waiting... (auto-refresh every 3 seconds)")
+
+            ready, _, _ = select.select([sys.stdin], [], [], 3.0)
+            if ready:
+                _ = sys.stdin.readline()
+                return
 
     def run(self):
         """Start admin server and panel."""
@@ -366,12 +433,18 @@ class AdminServerPanel:
         input("🟢 Server is running. Press Enter to open admin panel...")
 
         try:
-            self.run_admin_loop()
+            while self.voting_active:
+                self.run_admin_loop()
+                if not self.voting_active:
+                    break
+
+                self.show_server_status_wait()
+                continue
         except KeyboardInterrupt:
             print("\n\n⚠️  Keyboard interrupt detected")
+            self.voting_active = False
 
         print("\n🛑 Shutting down server...")
-        self.voting_active = False
         self.logger.info("Admin server shutdown")
 
         return True

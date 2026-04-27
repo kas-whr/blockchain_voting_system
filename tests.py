@@ -38,8 +38,14 @@ class BlindSignatureVotingTester:
         self.test_log = []
         self.candidates = []
         self.tokens = []
+        self.token_index = 0
+        self.token_lock = threading.Lock()
+        self.public_key = None
         self.votes_cast = 0
         self.votes_successful = 0
+        self.single_vote_attempted = 0
+        self.single_vote_successful = 0
+        self.concurrent_successful = 0
 
     def send_request(self, request):
         """Send request to server"""
@@ -78,6 +84,57 @@ class BlindSignatureVotingTester:
         self.test_log.append(msg)
         print(msg)
 
+    def fetch_test_tokens(self, count):
+        """Fetch one-time auth tokens from server for tests."""
+        response = self.send_request({
+            "action": "request_test_tokens",
+            "count": count
+        })
+
+        if response.get("status") != "success":
+            self.log(f"✗ Failed to fetch test tokens: {response.get('message')}")
+            return False
+
+        tokens = response.get("tokens", [])
+        if len(tokens) != count:
+            self.log(f"✗ Server returned unexpected token count: requested {count}, got {len(tokens)}")
+            return False
+
+        with self.token_lock:
+            self.tokens = tokens
+            self.token_index = 0
+
+        self.log(f"✓ Retrieved {len(tokens)} one-time auth tokens")
+        return True
+
+    def get_next_token(self):
+        """Get next available one-time token for signing request."""
+        with self.token_lock:
+            if self.token_index >= len(self.tokens):
+                return None
+            token = self.tokens[self.token_index]
+            self.token_index += 1
+            return token
+
+    def fetch_public_key(self):
+        """Fetch blind signature public key from server."""
+        response = self.send_request({"action": "public_key"})
+        if response.get("status") != "success":
+            self.log(f"✗ Failed to fetch server public key: {response.get('message')}")
+            return False
+
+        pubkey = response.get("public_key", {})
+        try:
+            self.public_key = RSAPublicKeyClient(
+                N=int(pubkey["N"]),
+                e=int(pubkey["e"])
+            )
+            self.log("✓ Retrieved server public key for blinding")
+            return True
+        except Exception as e:
+            self.log(f"✗ Invalid public key from server: {e}")
+            return False
+
     def test_1_setup(self):
         """Test 1: Setup - Get candidates and generate tokens"""
         self.log("\n" + "="*70)
@@ -99,8 +156,13 @@ class BlindSignatureVotingTester:
             self.log("✗ No candidates available!")
             return False
 
-        # Note: Tokens would be generated via admin panel
-        # For testing, we simulate token availability
+        # Fetch one-time auth tokens required by server
+        token_count = self.num_votes + 1  # one for test_2 + one per concurrent vote
+        if not self.fetch_test_tokens(token_count):
+            return False
+        if not self.fetch_public_key():
+            return False
+
         self.log(f"\n✓ System ready for {self.num_votes} test votes")
         return True
 
@@ -114,8 +176,11 @@ class BlindSignatureVotingTester:
             self.log("✗ No candidates available!")
             return False
 
-        # Simulate voting token (admin would issue this)
-        test_token = "TEST_TOKEN_001"
+        test_token = self.get_next_token()
+        if not test_token:
+            self.log("✗ No available auth tokens for test vote")
+            return False
+        self.single_vote_attempted = 1
         vote_choice = self.candidates[0]
 
         self.log(f"\nStep 1: Creating nonce (client-side for anonymity)...")
@@ -128,8 +193,10 @@ class BlindSignatureVotingTester:
 
         # Create temporary crypto client for blinding
         try:
-            pubkey = RSAPublicKeyClient(N=2**2048 - 1, e=65537)
-            crypto_client = CryptoClient(pubkey)
+            if self.public_key is None:
+                self.log("✗ Missing server public key")
+                return False
+            crypto_client = CryptoClient(self.public_key)
             blinded_data, blinding_factor = crypto_client.blind(payload)
             self.log(f"✓ Vote blinded successfully")
         except Exception as e:
@@ -192,6 +259,7 @@ class BlindSignatureVotingTester:
 
         with self.lock:
             self.votes_successful += 1
+            self.single_vote_successful += 1
 
         return True
 
@@ -228,10 +296,10 @@ class BlindSignatureVotingTester:
 
         self.log(f"\n✓ Concurrent voting completed")
         self.log(f"  Time elapsed: {elapsed:.2f} seconds")
-        self.log(f"  Votes successful: {self.votes_successful}")
+        self.log(f"  Votes successful: {self.concurrent_successful}")
         self.log(f"  Votes attempted: {self.votes_cast}")
-        self.log(f"  Success rate: {(self.votes_successful/self.votes_cast*100) if self.votes_cast > 0 else 0:.1f}%")
-        self.log(f"  Throughput: {self.votes_successful/elapsed:.1f} votes/sec")
+        self.log(f"  Success rate: {(self.concurrent_successful/self.votes_cast*100) if self.votes_cast > 0 else 0:.1f}%")
+        self.log(f"  Throughput: {self.concurrent_successful/elapsed:.1f} votes/sec")
 
         return True
 
@@ -253,14 +321,19 @@ class BlindSignatureVotingTester:
 
             try:
                 # Blind the vote
-                pubkey = RSAPublicKeyClient(N=2**2048 - 1, e=65537)
-                crypto_client = CryptoClient(pubkey)
+                if self.public_key is None:
+                    continue
+                crypto_client = CryptoClient(self.public_key)
                 blinded_data, blinding_factor = crypto_client.blind(payload)
 
                 # Request blind signature
+                vote_token = self.get_next_token()
+                if not vote_token:
+                    continue
+
                 sig_response = self.send_request({
                     "action": "get_blind_signature",
-                    "token": f"TEST_TOKEN_{vote_num:06d}",
+                    "token": vote_token,
                     "blinded_data": blinded_data.hex()
                 })
 
@@ -290,6 +363,7 @@ class BlindSignatureVotingTester:
                 if vote_response.get("status") == "success":
                     with self.lock:
                         self.votes_successful += 1
+                        self.concurrent_successful += 1
                         if vote_num % 25 == 0:
                             self.log(f"  [{thread_id}] Vote {vote_num:3d}: {vote_choice}")
 
@@ -330,7 +404,12 @@ class BlindSignatureVotingTester:
 
         if len(chain) > 0:
             genesis = chain[0]
-            self.log(f"  Genesis block: ✓ (index {genesis['index']}, timestamp {genesis['timestamp'][:10]})")
+            genesis_ts = genesis.get("timestamp")
+            if isinstance(genesis_ts, str):
+                ts_display = genesis_ts[:10]
+            else:
+                ts_display = str(genesis_ts)
+            self.log(f"  Genesis block: ✓ (index {genesis['index']}, timestamp {ts_display})")
 
         vote_blocks = len(chain) - 1
         self.log(f"  Vote blocks: {vote_blocks}")
@@ -535,10 +614,13 @@ class BlindSignatureVotingTester:
             self.log("TEST SUMMARY")
             self.log("="*70)
             self.log(f"✓ Test suite completed")
-            self.log(f"  Total votes attempted: {self.votes_cast}")
+            total_attempted = self.votes_cast + self.single_vote_attempted
+            self.log(f"  Single vote test success: {self.single_vote_successful}/{self.single_vote_attempted}")
+            self.log(f"  Concurrent votes successful: {self.concurrent_successful}/{self.votes_cast}")
+            self.log(f"  Total votes attempted: {total_attempted}")
             self.log(f"  Votes successful: {self.votes_successful}")
-            if self.votes_cast > 0:
-                self.log(f"  Success rate: {(self.votes_successful/self.votes_cast*100):.1f}%")
+            if total_attempted > 0:
+                self.log(f"  Success rate: {(self.votes_successful/total_attempted*100):.1f}%")
             self.log("="*70 + "\n")
 
         except Exception as e:

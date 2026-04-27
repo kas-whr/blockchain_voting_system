@@ -133,6 +133,13 @@ class VotingServer:
                 nonce = bytes.fromhex(nonce_hex)
                 signature = bytes.fromhex(signature_hex)
 
+                # Rebuild signed payload and verify blind signature.
+                # In secured mode, the server must reject votes with invalid signatures.
+                vote_bytes = vote_choice.encode('utf-8')
+                payload = len(vote_bytes).to_bytes(2, 'big') + vote_bytes + nonce
+                if not self.crypto_scheme.verify(payload, signature):
+                    return {"status": "error", "message": "Invalid signature"}
+
                 # Create voter ID hash from nonce (anonymous but prevents double voting)
                 voter_id_hash = hashlib.sha256(nonce).hexdigest()
 
@@ -143,11 +150,11 @@ class VotingServer:
                     return {"status": "error", "message": "Double voting detected"}
 
                 # Compute vote hash for receipt
-                vote_bytes = vote_choice.encode('utf-8')
                 vote_hash = hashlib.sha256(vote_bytes + nonce).hexdigest()
 
                 # Create receipt
                 receipt = {
+                    "receipt_hash": block["hash"],
                     "vote_hash": vote_hash,
                     "nonce_hex": nonce_hex,
                     "signature_hex": signature_hex,
@@ -174,6 +181,42 @@ class VotingServer:
                 "candidates": self.candidates
             }
 
+        # ========== GET BLIND SIGNATURE PUBLIC KEY ==========
+        elif action == "public_key":
+            try:
+                pubkey_numbers = self.crypto_scheme.get_public_key_numbers()
+                return {
+                    "status": "success",
+                    "public_key": {
+                        "N": str(pubkey_numbers["N"]),
+                        "e": pubkey_numbers["e"]
+                    }
+                }
+            except Exception as e:
+                return {"status": "error", "message": f"Public key error: {e}"}
+
+        # ========== ISSUE TOKENS FOR AUTOMATED TESTS ==========
+        elif action == "request_test_tokens":
+            count = request.get("count", 1)
+
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                return {"status": "error", "message": "count must be an integer"}
+
+            if count < 1:
+                return {"status": "error", "message": "count must be >= 1"}
+
+            try:
+                tokens = self.token_manager.generate_tokens(count)
+                return {
+                    "status": "success",
+                    "tokens": tokens,
+                    "count": len(tokens)
+                }
+            except Exception as e:
+                return {"status": "error", "message": f"Token generation error: {e}"}
+
         # ========== GET VOTING RESULTS ==========
         elif action == "results":
             results = self.blockchain.results()
@@ -185,15 +228,42 @@ class VotingServer:
 
         # ========== VERIFY RECEIPT ==========
         elif action == "verify_receipt":
+            receipt_hash = request.get("receipt_hash")
             vote_hash = request.get("vote_hash")
-            nonce_hex = request.get("nonce")
+            nonce_hex = request.get("nonce") or request.get("nonce_hex")
 
-            if not vote_hash or not nonce_hex:
-                return {"status": "error", "message": "Missing vote_hash or nonce"}
+            if not receipt_hash and (not vote_hash or not nonce_hex):
+                return {"status": "error", "message": "Missing receipt_hash or vote_hash+nonce"}
 
             try:
+                # Recommended flow: verify by one-string receipt hash.
+                if receipt_hash:
+                    block = self.blockchain.verify_vote(receipt_hash)
+                    if not block:
+                        return {
+                            "status": "error",
+                            "valid": False,
+                            "message": "Receipt not found in blockchain"
+                        }
+                    return {
+                        "status": "success",
+                        "valid": True,
+                        "message": "Receipt verified in blockchain",
+                        "block": {
+                            "block_index": block["index"],
+                            "block_hash": block["hash"],
+                            "timestamp": block["timestamp"],
+                            "candidate": block["candidate"]
+                        }
+                    }
+
+                # Backward-compatible flow: verify by vote_hash + nonce.
                 nonce = bytes.fromhex(nonce_hex)
-                voter_id_hash = hashlib.sha256(nonce).hexdigest()
+                # Keep hashing path consistent with vote insertion:
+                # vote_secured computes sha256(nonce).hexdigest(), then
+                # Blockchain.add_vote() hashes that string once more.
+                voter_id = hashlib.sha256(nonce).hexdigest()
+                voter_id_hash = hashlib.sha256(voter_id.encode()).hexdigest()
 
                 # Find block by voter_id_hash
                 block = None
@@ -207,6 +277,18 @@ class VotingServer:
                         "status": "error",
                         "valid": False,
                         "message": "Vote not found in blockchain"
+                    }
+
+                # Verify that receipt vote_hash matches chain data.
+                block_vote = block.get("candidate", "")
+                expected_vote_hash = hashlib.sha256(
+                    block_vote.encode('utf-8') + nonce
+                ).hexdigest()
+                if expected_vote_hash != vote_hash:
+                    return {
+                        "status": "error",
+                        "valid": False,
+                        "message": "Receipt hash mismatch"
                     }
 
                 return {
