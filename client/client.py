@@ -288,7 +288,7 @@ def submit_vote():
     print("  Step 7: Unblinding signature (client-side)...")
 
     try:
-        signature = crypto_client.unblind(blinded_signature, blinding_factor)
+        signature = crypto_client.unblind(blinded_signature)
         print(f"  ✓ Signature unblinded")
     except Exception as e:
         print(f"  ✗ Error unblinding: {e}")

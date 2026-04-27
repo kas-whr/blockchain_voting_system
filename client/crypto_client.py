@@ -5,7 +5,7 @@ Provides client-side RSA operations for anonymous voting:
 - Vote blinding (hides vote from server)
 - Blind signature reception
 - Signature unblinding (client gets final signature)
-- Receipt management
+- Signature verification
 """
 
 import hashlib
@@ -141,6 +141,36 @@ class CryptoClient:
 
         return signature_bytes
 
+    def verify_signature(self, message_bytes, signature_bytes):
+        """
+        Verify a blind signature over a message.
+
+        Args:
+            message_bytes: Original message (bytes)
+            signature_bytes: Signature to verify (bytes)
+
+        Returns:
+            bool: True if signature is valid
+        """
+        try:
+            # Convert to integers
+            sig_int = int.from_bytes(signature_bytes, 'big')
+            msg_int = int.from_bytes(message_bytes, 'big')
+
+            # Recover message: recovered = signature^e mod N
+            e = self.public_key.e
+            N = self.public_key.N
+            recovered_int = pow(sig_int, e, N)
+
+            # Compare with padding to handle leading zeros
+            key_size_bytes = N.bit_length() // 8 + 1
+            recovered_padded = recovered_int.to_bytes(key_size_bytes, 'big')
+            message_padded = msg_int.to_bytes(key_size_bytes, 'big')
+
+            return recovered_padded == message_padded
+        except:
+            return False
+
 
 class DigitalReceipt:
     """
@@ -148,7 +178,6 @@ class DigitalReceipt:
 
     Provides:
     - Receipt generation from block hash
-    - Receipt verification
     - Receipt persistence (saving/loading)
     """
 
@@ -179,28 +208,6 @@ class DigitalReceipt:
             "candidate": self.candidate,
             "timestamp": self.timestamp
         }
-
-    def to_json(self):
-        """
-        Convert receipt to JSON string.
-
-        Returns:
-            str: JSON representation of receipt
-        """
-        import json
-        return json.dumps(self.to_dict(), indent=2)
-
-    def verify_hash(self, expected_hash):
-        """
-        Verify that receipt hash matches expected value.
-
-        Args:
-            expected_hash: Expected block hash
-
-        Returns:
-            bool: True if hashes match
-        """
-        return self.block_hash == expected_hash
 
     def save_to_file(self, filename=None):
         """

@@ -124,10 +124,6 @@ class Blockchain:
                 return block
         return None
 
-    def get_vote_by_block_hash(self, block_hash):
-        """Get a block by its hash (alias for verify_vote)."""
-        return self.verify_vote(block_hash)
-
     def results(self):
         """
         Get vote count by candidate.

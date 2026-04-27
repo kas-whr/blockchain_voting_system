@@ -96,12 +96,15 @@ class VotingServer:
                 # Sign blinded data (server doesn't know what it's signing!)
                 blinded_signature = self.crypto_scheme.sign_blinded(blinded_bytes)
 
+                # Get public key numbers for client
+                pubkey_numbers = self.crypto_scheme.get_public_key_numbers()
+
                 return {
                     "status": "success",
                     "blinded_signature": blinded_signature.hex(),
                     "public_key": {
-                        "N": str(self.crypto_scheme.N),
-                        "e": self.crypto_scheme.e
+                        "N": str(pubkey_numbers["N"]),
+                        "e": pubkey_numbers["e"]
                     }
                 }
             except ValueError as e:
@@ -130,8 +133,14 @@ class VotingServer:
                 nonce = bytes.fromhex(nonce_hex)
                 signature = bytes.fromhex(signature_hex)
 
-                # Add to blockchain (verifies signature)
-                block = self.blockchain.add_vote(vote_choice, nonce, signature)
+                # Create voter ID hash from nonce (anonymous but prevents double voting)
+                voter_id_hash = hashlib.sha256(nonce).hexdigest()
+
+                # Add to blockchain
+                block = self.blockchain.add_vote(voter_id_hash, vote_choice)
+
+                if block is None:
+                    return {"status": "error", "message": "Double voting detected"}
 
                 # Compute vote hash for receipt
                 vote_bytes = vote_choice.encode('utf-8')
@@ -183,9 +192,17 @@ class VotingServer:
                 return {"status": "error", "message": "Missing vote_hash or nonce"}
 
             try:
-                found, block = self.blockchain.verify_vote(vote_hash)
+                nonce = bytes.fromhex(nonce_hex)
+                voter_id_hash = hashlib.sha256(nonce).hexdigest()
 
-                if not found:
+                # Find block by voter_id_hash
+                block = None
+                for b in self.blockchain.chain:
+                    if b["voter_id_hash"] == voter_id_hash:
+                        block = b
+                        break
+
+                if not block:
                     return {
                         "status": "error",
                         "valid": False,
@@ -196,7 +213,12 @@ class VotingServer:
                     "status": "success",
                     "valid": True,
                     "message": "Vote verified in blockchain",
-                    "block": block
+                    "block": {
+                        "block_index": block["index"],
+                        "block_hash": block["hash"],
+                        "timestamp": block["timestamp"],
+                        "candidate": block["candidate"]
+                    }
                 }
             except Exception as e:
                 return {"status": "error", "message": str(e)}
@@ -216,11 +238,11 @@ class VotingServer:
         # ========== VALIDATE BLOCKCHAIN ==========
         elif action == "validate":
             try:
-                valid, errors = self.blockchain.validate_chain()
+                validation_result = self.blockchain.validate_chain()
                 return {
                     "status": "success",
-                    "valid": valid,
-                    "errors": errors if errors else []
+                    "valid": validation_result.get("valid", False),
+                    "errors": [validation_result.get("message", "")]
                 }
             except Exception as e:
                 return {"status": "error", "message": str(e)}

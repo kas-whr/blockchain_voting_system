@@ -51,8 +51,7 @@ class AdminServerPanel:
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_file),
-                logging.StreamHandler(sys.stdout)
+                logging.FileHandler(log_file)
             ]
         )
         self.logger = logging.getLogger(__name__)
