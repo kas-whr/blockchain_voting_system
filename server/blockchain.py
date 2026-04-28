@@ -205,7 +205,7 @@ class Blockchain:
                 block["candidate"],
                 block["previous_hash"]
             )
-
+        
             if calculated_hash != block["hash"]:
                 return {
                     "valid": False,

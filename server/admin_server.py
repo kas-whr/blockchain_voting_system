@@ -25,11 +25,12 @@ from server import VotingServer
 class AdminServerPanel:
     """Interactive admin panel for voting server management."""
 
-    def __init__(self, host="0.0.0.0", port=5000, candidates_file="server/CANDIDATES.json"):
+    def __init__(self, host="0.0.0.0", port=5000, candidates_file="server/CANDIDATES.json", test_mode=False):
         """Initialize admin panel."""
         self.host = host
         self.port = port
         self.candidates_file = candidates_file
+        self.test_mode = test_mode
         self.voting_server = None
         self.server_thread = None
         self.voting_active = True
@@ -63,7 +64,11 @@ class AdminServerPanel:
     def initialize_server(self):
         """Initialize voting server."""
         print("\n🔧 Initializing Voting Server...")
-        self.voting_server = VotingServer(self.host, self.port, self.candidates_file)
+        self.voting_server = VotingServer(self.host, self.port, self.candidates_file, self.test_mode)
+
+        if self.test_mode:
+            print("⚠ Test mode enabled: request_test_tokens is available")
+            self.logger.info("Admin panel started in TEST MODE")
 
         if not self.voting_server.initialize():
             print("❌ Failed to initialize server")
@@ -453,18 +458,32 @@ class AdminServerPanel:
 def main():
     """Main entry point."""
     if len(sys.argv) < 2:
-        print("Usage: python admin_server.py PORT [CANDIDATES_FILE]")
-        print("Example: python admin_server.py 5000 server/CANDIDATES.json")
+        print("Usage: python admin_server.py PORT [HOST] [CANDIDATES_FILE] [--test-mode]")
+        print("Example (normal): python admin_server.py 5000 0.0.0.0 server/CANDIDATES.json")
+        print("Example (tests):  python admin_server.py 5000 0.0.0.0 server/CANDIDATES.json --test-mode")
+        print("Example (local):  python admin_server.py 5000 192.168.1.100 server/CANDIDATES.json")
         sys.exit(1)
 
     try:
         port = int(sys.argv[1])
-        candidates_file = sys.argv[2] if len(sys.argv) > 2 else "server/CANDIDATES.json"
     except ValueError:
         print("❌ Invalid port number")
         sys.exit(1)
 
-    admin = AdminServerPanel(port=port, candidates_file=candidates_file)
+    host = sys.argv[2] if len(sys.argv) > 2 else "0.0.0.0"
+
+    args = sys.argv[3:]
+    test_mode = False
+    filtered_args = []
+    for arg in args:
+        if arg == "--test-mode":
+            test_mode = True
+        else:
+            filtered_args.append(arg)
+
+    candidates_file = filtered_args[0] if filtered_args else "server/CANDIDATES.json"
+
+    admin = AdminServerPanel(host=host, port=port, candidates_file=candidates_file, test_mode=test_mode)
     admin.run()
 
 

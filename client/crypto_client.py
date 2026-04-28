@@ -6,16 +6,18 @@ Provides client-side RSA operations for anonymous voting:
 - Blind signature reception
 - Signature unblinding (client gets final signature)
 - Signature verification
+
+Uses python-rsa library for consistent RSA implementation across client and server.
 """
 
-import hashlib
+import rsa
 
 
 class RSAPublicKeyClient:
     """
-    Client-side RSA public key holder.
+    Client-side RSA public key holder using python-rsa library.
 
-    Stores RSA public key numbers (N, e) for blinding operations.
+    Stores RSA public key for blinding operations.
     Does not contain private key - safe to use on client side.
     """
 
@@ -27,8 +29,7 @@ class RSAPublicKeyClient:
             N: RSA modulus
             e: RSA public exponent (typically 65537)
         """
-        self.N = N
-        self.e = e
+        self.public_key = rsa.PublicKey(N, e)
 
     def blind(self, message_int, blinding_factor):
         """
@@ -43,8 +44,8 @@ class RSAPublicKeyClient:
         Returns:
             int: Blinded message as integer
         """
-        r_e = pow(blinding_factor, self.e, self.N)
-        blinded_int = (message_int * r_e) % self.N
+        r_e = pow(blinding_factor, self.public_key.e, self.public_key.n)
+        blinded_int = (message_int * r_e) % self.public_key.n
         return blinded_int
 
     def unblind(self, blinded_signature_int, blinding_factor):
@@ -60,14 +61,15 @@ class RSAPublicKeyClient:
         Returns:
             int: Unblinded signature as integer
         """
-        r_inv = pow(blinding_factor, -1, self.N)
-        signature_int = (blinded_signature_int * r_inv) % self.N
+        r_inv = pow(blinding_factor, -1, self.public_key.n)
+        signature_int = (blinded_signature_int * r_inv) % self.public_key.n
         return signature_int
+
 
 
 class CryptoClient:
     """
-    Client-side cryptographic operations for voting.
+    Client-side cryptographic operations for voting using python-rsa library.
 
     Handles:
     - Vote blinding (prevents server from knowing vote)
@@ -101,17 +103,17 @@ class CryptoClient:
         message_int = int.from_bytes(message_bytes, 'big')
 
         # Ensure message fits in RSA key
-        if message_int >= self.public_key.N:
+        if message_int >= self.public_key.public_key.n:
             raise ValueError("Message too large for RSA key")
 
         # Generate random blinding factor
-        self.blinding_factor = secrets.randbelow(self.public_key.N)
+        self.blinding_factor = secrets.randbelow(self.public_key.public_key.n)
 
         # Blind the message
         blinded_int = self.public_key.blind(message_int, self.blinding_factor)
 
         # Convert back to bytes
-        key_size_bytes = self.public_key.N.bit_length() // 8 + 1
+        key_size_bytes = self.public_key.public_key.n.bit_length() // 8 + 1
         blinded_bytes = blinded_int.to_bytes(key_size_bytes, 'big')
 
         return blinded_bytes, self.blinding_factor
@@ -136,14 +138,14 @@ class CryptoClient:
         signature_int = self.public_key.unblind(sig_int, self.blinding_factor)
 
         # Convert back to bytes
-        key_size_bytes = self.public_key.N.bit_length() // 8 + 1
+        key_size_bytes = self.public_key.public_key.n.bit_length() // 8 + 1
         signature_bytes = signature_int.to_bytes(key_size_bytes, 'big')
 
         return signature_bytes
 
     def verify_signature(self, message_bytes, signature_bytes):
         """
-        Verify a blind signature over a message.
+        Verify a blind signature over a message using python-rsa PublicKey.
 
         Args:
             message_bytes: Original message (bytes)
@@ -158,8 +160,8 @@ class CryptoClient:
             msg_int = int.from_bytes(message_bytes, 'big')
 
             # Recover message: recovered = signature^e mod N
-            e = self.public_key.e
-            N = self.public_key.N
+            e = self.public_key.public_key.e
+            N = self.public_key.public_key.n
             recovered_int = pow(sig_int, e, N)
 
             # Compare with padding to handle leading zeros

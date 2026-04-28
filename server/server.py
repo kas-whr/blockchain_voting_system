@@ -412,9 +412,10 @@ class VotingServer:
 def main():
     """Main entry point."""
     if len(sys.argv) < 2:
-        print("Usage: python server.py PORT [CANDIDATES_FILE] [--test-mode]")
-        print("Example (normal): python server.py 5000 server/CANDIDATES.json")
-        print("Example (tests):  python server.py 5000 server/CANDIDATES.json --test-mode")
+        print("Usage: python server.py PORT [HOST] [CANDIDATES_FILE] [--test-mode]")
+        print("Example (normal): python server.py 5000 0.0.0.0 server/CANDIDATES.json")
+        print("Example (tests):  python server.py 5000 0.0.0.0 server/CANDIDATES.json --test-mode")
+        print("Example (local):  python server.py 5000 192.168.1.100 server/CANDIDATES.json")
         sys.exit(1)
 
     try:
@@ -423,7 +424,9 @@ def main():
         print("Error: PORT must be an integer")
         sys.exit(1)
 
-    args = sys.argv[2:]
+    host = sys.argv[2] if len(sys.argv) > 2 else "0.0.0.0"
+
+    args = sys.argv[3:]
     test_mode = False
     filtered_args = []
     for arg in args:
@@ -437,7 +440,7 @@ def main():
     if test_mode:
         print("⚠ Server started in TEST MODE: request_test_tokens is enabled")
 
-    server = VotingServer(port=port, candidates_file=candidates_file, test_mode=test_mode)
+    server = VotingServer(host=host, port=port, candidates_file=candidates_file, test_mode=test_mode)
     server.start()
 
 
