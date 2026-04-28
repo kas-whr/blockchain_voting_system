@@ -31,6 +31,16 @@ class RSAPublicKeyClient:
         """
         self.public_key = rsa.PublicKey(N, e)
 
+    @property
+    def N(self):
+        """Access modulus for backward compatibility."""
+        return self.public_key.n
+
+    @property
+    def e(self):
+        """Access public exponent for backward compatibility."""
+        return self.public_key.e
+
     def blind(self, message_int, blinding_factor):
         """
         Blind a message using RSA blinding formula.
