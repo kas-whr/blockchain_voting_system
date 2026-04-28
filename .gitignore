@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+server/__pycache__/
+client/__pycache__/
+
+# Virtual Environments
+venv/
+ENV/
+env/
+.venv
+.env
+
+# IDE & Editors
+.vscode/
+
+# Voting System Generated Files
+client/receipts/
+client/exports/
+*.txt
+logs/
+
+# Don't ignore
+!README.md
+!client/
+!server/
