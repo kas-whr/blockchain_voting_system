@@ -34,7 +34,7 @@ Run from repository root:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r server/requirements.txt
+pip install -r requirements.txt
 ```
 
 If you use Windows PowerShell:
@@ -42,7 +42,7 @@ If you use Windows PowerShell:
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r server/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## 4) Start the Election (Admin Side)
