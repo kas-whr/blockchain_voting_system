@@ -173,4 +173,4 @@ Both client and server now use the `python-rsa` library for key management and c
 - **One-Person-One-Vote**: Enforced by one-time token consumption and nonce-based deduplication in blockchain.
 - **Network Security**: For production use with local network access, consider adding TLS/HTTPS encryption. Current implementation uses plain JSON over TCP.
 - **Blockchain**: Single-node, in-memory (academic prototype). Data persistence provided through export/result packages rather than continuous database storage.
-- **Requirements**: Install `python-rsa` via: `python3 -m pip install rsa` (or via nix-shell on NixOS)
+- **Requirements**: Install `python-rsa` via: `python3 -m pip install rsa`
