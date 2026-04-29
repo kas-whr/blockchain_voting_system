@@ -10,8 +10,7 @@ It includes:
 ## 1) Prerequisites
 
 - Python `3.9+` (recommended `3.10+`)
-- `pip`
-- Terminal access on Linux/macOS/Windows
+- python-rsa >= 4.9
 
 ## 2) Project Structure
 
