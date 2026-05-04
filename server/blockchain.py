@@ -65,7 +65,7 @@ class Blockchain:
         Add a vote to the blockchain.
 
         Args:
-            voter_id: Voter identifier (e.g., "John_Doe")
+            voter_id: Voter random identifier
             candidate: Selected candidate name
             timestamp: Optional timestamp (auto-generated if None)
 
